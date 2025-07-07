@@ -1,0 +1,412 @@
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FinanceAI - Gestão Financeira Inteligente</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+</head>
+<body>
+    <div class="app">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <i class="fas fa-brain"></i>
+                    <span>FinanceAI</span>
+                </div>
+            </div>
+            <nav class="sidebar-nav">
+                <ul>
+                    <li><a href="#dashboard" class="nav-link active"><i class="fas fa-chart-line"></i> Dashboard</a></li>
+                    <li><a href="#bills" class="nav-link"><i class="fas fa-file-invoice-dollar"></i> Boletos</a></li>
+                    <li><a href="#invoices" class="nav-link"><i class="fas fa-receipt"></i> Notas Fiscais</a></li>
+                    <li><a href="#revenues" class="nav-link"><i class="fas fa-coins"></i> Receitas</a></li>
+                    <li><a href="#import" class="nav-link"><i class="fas fa-upload"></i> Importar</a></li>
+                    <li><a href="#notifications" class="nav-link"><i class="fas fa-bell"></i> Notificações</a></li>
+                    <li><a href="#settings" class="nav-link"><i class="fas fa-cog"></i> Configurações</a></li>
+                </ul>
+            </nav>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <header class="header">
+                <div class="header-left">
+                    <h1 id="page-title">Dashboard</h1>
+                </div>
+                <div class="header-right">
+                    <div class="notification-bell">
+                        <i class="fas fa-bell"></i>
+                        <span class="notification-count">3</span>
+                    </div>
+                    <div class="user-profile">
+                        <img src="https://via.placeholder.com/40x40" alt="Profile">
+                    </div>
+                </div>
+            </header>
+
+            <div class="content">
+                <!-- Dashboard Section -->
+                <section id="dashboard-section" class="section active">
+                    <div class="dashboard-grid">
+                        <div class="dashboard-card">
+                            <div class="card-header">
+                                <h3>Vencimentos Próximos</h3>
+                                <i class="fas fa-exclamation-triangle text-warning"></i>
+                            </div>
+                            <div class="card-content">
+                                <div class="metric">
+                                    <span class="metric-value">3</span>
+                                    <span class="metric-label">Boletos</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="dashboard-card">
+                            <div class="card-header">
+                                <h3>Total em Aberto</h3>
+                                <i class="fas fa-money-bill-wave text-danger"></i>
+                            </div>
+                            <div class="card-content">
+                                <div class="metric">
+                                    <span class="metric-value">R$ 12.847,50</span>
+                                    <span class="metric-label">A pagar</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="dashboard-card">
+                            <div class="card-header">
+                                <h3>Pagos este Mês</h3>
+                                <i class="fas fa-check-circle text-success"></i>
+                            </div>
+                            <div class="card-content">
+                                <div class="metric">
+                                    <span class="metric-value">R$ 8.320,00</span>
+                                    <span class="metric-label">Concluído</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="dashboard-card">
+                            <div class="card-header">
+                                <h3>Documentos Processados</h3>
+                                <i class="fas fa-robot text-info"></i>
+                            </div>
+                            <div class="card-content">
+                                <div class="metric">
+                                    <span class="metric-value">847</span>
+                                    <span class="metric-label">IA Analytics</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="dashboard-charts">
+                        <div class="chart-container">
+                            <h3>Fluxo de Caixa - Últimos 6 Meses</h3>
+                            <canvas id="cashflowChart"></canvas>
+                        </div>
+                        <div class="recent-activities">
+                            <h3>Atividades Recentes</h3>
+                            <div class="activity-list" id="activityList"></div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Bills Section -->
+                <section id="bills-section" class="section">
+                    <div class="section-header">
+                        <h2>Gestão de Boletos</h2>
+                        <button class="btn btn-primary" onclick="openAddBillModal()">
+                            <i class="fas fa-plus"></i> Adicionar Boleto
+                        </button>
+                    </div>
+                    <div class="bills-grid">
+                        <div class="bills-list" id="billsList"></div>
+                    </div>
+                </section>
+
+                <!-- Invoices Section -->
+                <section id="invoices-section" class="section">
+                    <div class="section-header">
+                        <h2>Notas Fiscais</h2>
+                        <button class="btn btn-primary" onclick="openAddInvoiceModal()">
+                            <i class="fas fa-plus"></i> Adicionar Nota
+                        </button>
+                    </div>
+                    <div class="invoices-grid">
+                        <div class="invoices-list" id="invoicesList"></div>
+                    </div>
+                </section>
+
+                <!-- Revenues Section -->
+                <section id="revenues-section" class="section">
+                    <div class="section-header">
+                        <h2>Gestão de Receitas</h2>
+                        <button class="btn btn-primary" onclick="openAddRevenueModal()">
+                            <i class="fas fa-plus"></i> Adicionar Receita
+                        </button>
+                    </div>
+                    <div class="revenues-grid">
+                        <div class="revenues-list" id="revenuesList"></div>
+                    </div>
+                </section>
+
+                <!-- Import Section -->
+                <section id="import-section" class="section">
+                    <div class="import-container">
+                        <div class="import-header">
+                            <h2>Importação Inteligente</h2>
+                            <p>Arraste e solte seus arquivos ou clique para selecionar</p>
+                        </div>
+                        <div class="drop-zone" id="dropZone">
+                            <div class="drop-zone-content">
+                                <i class="fas fa-cloud-upload-alt"></i>
+                                <p>Arraste arquivos aqui ou clique para selecionar</p>
+                                <p class="supported-formats">Suporta: PDF, JPG, PNG, XML, TXT</p>
+                            </div>
+                            <input type="file" id="fileInput" multiple accept=".pdf,.jpg,.jpeg,.png,.xml,.txt">
+                        </div>
+                        <div class="import-progress" id="importProgress"></div>
+                    </div>
+                </section>
+
+                <!-- Notifications Section -->
+                <section id="notifications-section" class="section">
+                    <div class="notifications-container">
+                        <h2>Central de Notificações</h2>
+                        <div class="notifications-list" id="notificationsList"></div>
+                    </div>
+                </section>
+
+                <!-- Settings Section -->
+                <section id="settings-section" class="section">
+                    <div class="settings-container">
+                        <h2>Configurações</h2>
+                        <div class="settings-grid">
+                            <div class="settings-card">
+                                <h3>WhatsApp Integration</h3>
+                                <div class="setting-item">
+                                    <label>
+                                        <input type="checkbox" id="whatsappEnabled" checked>
+                                        Ativar notificações WhatsApp
+                                    </label>
+                                </div>
+                                <div class="setting-item">
+                                    <label>Número do WhatsApp:</label>
+                                    <input type="tel" id="whatsappNumber" placeholder="+55 (11) 99999-9999">
+                                </div>
+                                <div class="setting-item">
+                                    <label>Antecedência para avisos:</label>
+                                    <select id="reminderDays">
+                                        <option value="1">1 dia</option>
+                                        <option value="3" selected>3 dias</option>
+                                        <option value="7">7 dias</option>
+                                        <option value="15">15 dias</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <div class="settings-card">
+                                <h3>IA & Automação</h3>
+                                <div class="setting-item">
+                                    <label>
+                                        <input type="checkbox" id="aiProcessing" checked>
+                                        Processamento automático de documentos
+                                    </label>
+                                </div>
+                                <div class="setting-item">
+                                    <label>
+                                        <input type="checkbox" id="smartCategorization" checked>
+                                        Categorização inteligente
+                                    </label>
+                                </div>
+                                <div class="setting-item">
+                                    <label>
+                                        <input type="checkbox" id="duplicateDetection" checked>
+                                        Detectar duplicatas
+                                    </label>
+                                </div>
+                            </div>
+
+                            <div class="settings-card">
+                                <h3>Gestão de Dados</h3>
+                                <div class="setting-item">
+                                    <button class="btn btn-export" onclick="financeAI.exportFinancialData()">
+                                        <i class="fas fa-download"></i> Exportar Dados
+                                    </button>
+                                </div>
+                                <div class="setting-item">
+                                    <button class="btn btn-import" onclick="financeAI.importFinancialData()">
+                                        <i class="fas fa-upload"></i> Importar Dados
+                                    </button>
+                                </div>
+                                <div class="setting-item">
+                                    <button class="btn btn-clear" onclick="financeAI.clearAllData()">
+                                        <i class="fas fa-trash"></i> Limpar Todos os Dados
+                                    </button>
+                                </div>
+                                <div class="storage-info" id="storageInfo">
+                                    <strong>Armazenamento:</strong> <span id="storageType">Carregando...</span><br>
+                                    <strong>Documentos:</strong> <span id="documentCount">0</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+            </div>
+        </main>
+    </div>
+
+    <!-- Modals -->
+    <div id="addBillModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Adicionar Boleto</h3>
+                <button class="close-btn" onclick="closeModal('addBillModal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="addBillForm">
+                    <div class="form-group">
+                        <label>Nome do Boleto</label>
+                        <input type="text" id="billName" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Valor</label>
+                        <input type="number" id="billAmount" step="0.01" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Data de Vencimento</label>
+                        <input type="date" id="billDueDate" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Categoria</label>
+                        <select id="billCategory">
+                            <option value="utilities">Utilidades</option>
+                            <option value="rent">Aluguel</option>
+                            <option value="insurance">Seguro</option>
+                            <option value="taxes">Impostos</option>
+                            <option value="other">Outros</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Código de Barras</label>
+                        <input type="text" id="billBarcode">
+                    </div>
+                    <div class="form-actions">
+                        <button type="button" onclick="closeModal('addBillModal')">Cancelar</button>
+                        <button type="submit">Salvar</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div id="addInvoiceModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Adicionar Nota Fiscal</h3>
+                <button class="close-btn" onclick="closeModal('addInvoiceModal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="addInvoiceForm">
+                    <div class="form-group">
+                        <label>Número da Nota</label>
+                        <input type="text" id="invoiceNumber" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Fornecedor</label>
+                        <input type="text" id="invoiceSupplier" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Valor Total</label>
+                        <input type="number" id="invoiceAmount" step="0.01" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Data de Emissão</label>
+                        <input type="date" id="invoiceDate" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Categoria</label>
+                        <select id="invoiceCategory">
+                            <option value="supplies">Suprimentos</option>
+                            <option value="services">Serviços</option>
+                            <option value="equipment">Equipamentos</option>
+                            <option value="other">Outros</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Status</label>
+                        <select id="invoiceStatus">
+                            <option value="pending">Pendente</option>
+                            <option value="received">Recebido</option>
+                        </select>
+                    </div>
+                    <div class="form-actions">
+                        <button type="button" onclick="closeModal('addInvoiceModal')">Cancelar</button>
+                        <button type="submit">Salvar</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div id="addRevenueModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Adicionar Receita</h3>
+                <button class="close-btn" onclick="closeModal('addRevenueModal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="addRevenueForm">
+                    <div class="form-group">
+                        <label>Descrição</label>
+                        <input type="text" id="revenueDescription" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Valor</label>
+                        <input type="number" id="revenueAmount" step="0.01" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Data de Recebimento</label>
+                        <input type="date" id="revenueDate" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Categoria</label>
+                        <select id="revenueCategory">
+                            <option value="sales">Vendas</option>
+                            <option value="services">Prestação de Serviços</option>
+                            <option value="investments">Investimentos</option>
+                            <option value="rental">Aluguel</option>
+                            <option value="freelance">Freelance</option>
+                            <option value="other">Outros</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Cliente/Fonte</label>
+                        <input type="text" id="revenueSource" placeholder="Nome do cliente ou fonte da receita">
+                    </div>
+                    <div class="form-group">
+                        <label>Observações</label>
+                        <textarea id="revenueNotes" rows="3" placeholder="Observações adicionais (opcional)"></textarea>
+                    </div>
+                    <div class="form-actions">
+                        <button type="button" onclick="closeModal('addRevenueModal')">Cancelar</button>
+                        <button type="submit">Salvar</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+    <script src="storage.js"></script>
+    <script src="ai-engine.js"></script>
+    <script src="whatsapp-integration.js"></script>
+    <script src="file-processor.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
