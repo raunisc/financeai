@@ -23,7 +23,6 @@
                     <li><a href="#bills" class="nav-link"><i class="fas fa-file-invoice-dollar"></i> Boletos</a></li>
                     <li><a href="#invoices" class="nav-link"><i class="fas fa-receipt"></i> Notas Fiscais</a></li>
                     <li><a href="#revenues" class="nav-link"><i class="fas fa-coins"></i> Receitas</a></li>
-                    <li><a href="#import" class="nav-link"><i class="fas fa-upload"></i> Importar</a></li>
                     <li><a href="#notifications" class="nav-link"><i class="fas fa-bell"></i> Notificações</a></li>
                     <li><a href="#settings" class="nav-link"><i class="fas fa-cog"></i> Configurações</a></li>
                 </ul>
@@ -160,17 +159,16 @@
                     <div class="import-container">
                         <div class="import-header">
                             <h2>Importação Inteligente</h2>
-                            <p>Arraste e solte seus arquivos ou clique para selecionar</p>
+                            <p>Funcionalidade removida temporariamente</p>
                         </div>
-                        <div class="drop-zone" id="dropZone">
-                            <div class="drop-zone-content">
-                                <i class="fas fa-cloud-upload-alt"></i>
-                                <p>Arraste arquivos aqui ou clique para selecionar</p>
-                                <p class="supported-formats">Suporta: PDF, JPG, PNG, XML, TXT</p>
+                        <div class="import-disabled">
+                            <div class="import-disabled-content">
+                                <i class="fas fa-ban"></i>
+                                <h3>Funcionalidade Removida</h3>
+                                <p>A funcionalidade de importação foi removida.</p>
+                                <p>Use os formulários manuais para adicionar seus documentos.</p>
                             </div>
-                            <input type="file" id="fileInput" multiple accept=".pdf,.jpg,.jpeg,.png,.xml,.txt">
                         </div>
-                        <div class="import-progress" id="importProgress"></div>
                     </div>
                 </section>
 
@@ -188,47 +186,128 @@
                         <h2>Configurações</h2>
                         <div class="settings-grid">
                             <div class="settings-card">
-                                <h3>WhatsApp Integration</h3>
-                                <div class="setting-item">
-                                    <label>
-                                        <input type="checkbox" id="whatsappEnabled" checked>
-                                        Ativar notificações WhatsApp
-                                    </label>
-                                </div>
-                                <div class="setting-item">
-                                    <label>Número do WhatsApp:</label>
-                                    <input type="tel" id="whatsappNumber" placeholder="+55 (11) 99999-9999">
-                                </div>
-                                <div class="setting-item">
-                                    <label>Antecedência para avisos:</label>
-                                    <select id="reminderDays">
-                                        <option value="1">1 dia</option>
-                                        <option value="3" selected>3 dias</option>
-                                        <option value="7">7 dias</option>
-                                        <option value="15">15 dias</option>
-                                    </select>
+                                <h3>Notificações (Desativadas Temporariamente)</h3>
+                                <div class="setting-item disabled">
+                                    <p style="color: var(--text-secondary); font-style: italic;">
+                                        As funcionalidades de notificação por WhatsApp e Email foram temporariamente desabilitadas para manutenção.
+                                    </p>
                                 </div>
                             </div>
 
                             <div class="settings-card">
-                                <h3>IA & Automação</h3>
+                                <h3>Backup e Restauração</h3>
                                 <div class="setting-item">
                                     <label>
-                                        <input type="checkbox" id="aiProcessing" checked>
-                                        Processamento automático de documentos
+                                        <input type="checkbox" id="autoBackup" checked>
+                                        Backup automático (diário)
+                                    </label>
+                                </div>
+                                <div class="setting-item">
+                                    <button class="btn btn-info" onclick="financeAI.createBackup()">
+                                        <i class="fas fa-cloud-upload-alt"></i> Criar Backup Manual
+                                    </button>
+                                </div>
+                                <div class="setting-item">
+                                    <button class="btn btn-success" onclick="financeAI.downloadBackup()">
+                                        <i class="fas fa-download"></i> Baixar Backup
+                                    </button>
+                                </div>
+                                <div class="backup-info" id="backupInfo">
+                                    <small>Último backup: <span id="lastBackupTime">Nunca</span></small>
+                                </div>
+                            </div>
+
+                            <div class="settings-card">
+                                <h3>Análise Inteligente</h3>
+                                <div class="setting-item">
+                                    <button class="btn btn-primary" onclick="financeAI.generateFinancialReport()">
+                                        <i class="fas fa-chart-bar"></i> Gerar Relatório Detalhado
+                                    </button>
+                                </div>
+                                <div class="setting-item">
+                                    <button class="btn btn-info" onclick="financeAI.showSpendingInsights()">
+                                        <i class="fas fa-lightbulb"></i> Insights de Gastos
+                                    </button>
+                                </div>
+                                <div class="setting-item">
+                                    <button class="btn btn-warning" onclick="financeAI.predictCashFlow()">
+                                        <i class="fas fa-crystal-ball"></i> Previsão de Fluxo de Caixa
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div class="settings-card">
+                                <h3>Filtros e Visualização</h3>
+                                <div class="setting-item">
+                                    <label>Período padrão para relatórios:</label>
+                                    <select id="defaultReportPeriod">
+                                        <option value="30">Últimos 30 dias</option>
+                                        <option value="90" selected>Últimos 3 meses</option>
+                                        <option value="180">Últimos 6 meses</option>
+                                        <option value="365">Último ano</option>
+                                    </select>
+                                </div>
+                                <div class="setting-item">
+                                    <label>
+                                        <input type="checkbox" id="showPaidBills" checked>
+                                        Mostrar boletos pagos por padrão
                                     </label>
                                 </div>
                                 <div class="setting-item">
                                     <label>
-                                        <input type="checkbox" id="smartCategorization" checked>
-                                        Categorização inteligente
+                                        <input type="checkbox" id="compactView">
+                                        Visualização compacta
                                     </label>
                                 </div>
+                            </div>
+
+                            <div class="settings-card">
+                                <h3>Configuração de Banco de Dados</h3>
                                 <div class="setting-item">
-                                    <label>
-                                        <input type="checkbox" id="duplicateDetection" checked>
-                                        Detectar duplicatas
-                                    </label>
+                                    <label>Modo de Armazenamento:</label>
+                                    <select id="storageMode" onchange="financeAI.onStorageModeChange()">
+                                        <option value="local">Local (IndexedDB/localStorage)</option>
+                                        <option value="mysql">MySQL (Servidor Remoto)</option>
+                                    </select>
+                                </div>
+                                
+                                <div id="mysqlSettings" class="mysql-settings" style="display: none;">
+                                    <div class="setting-item">
+                                        <label>Host do Servidor:</label>
+                                        <input type="text" id="mysqlHost" placeholder="localhost ou IP do servidor" value="">
+                                    </div>
+                                    <div class="setting-item">
+                                        <label>Porta:</label>
+                                        <input type="number" id="mysqlPort" placeholder="3306" value="3306">
+                                    </div>
+                                    <div class="setting-item">
+                                        <label>Nome do Banco:</label>
+                                        <input type="text" id="mysqlDatabase" placeholder="financeai_db" value="financeai_db">
+                                    </div>
+                                    <div class="setting-item">
+                                        <label>Usuário:</label>
+                                        <input type="text" id="mysqlUsername" placeholder="usuario" value="">
+                                    </div>
+                                    <div class="setting-item">
+                                        <label>Senha:</label>
+                                        <input type="password" id="mysqlPassword" placeholder="senha" value="">
+                                    </div>
+                                    <div class="setting-item">
+                                        <button class="btn btn-info" onclick="financeAI.testMySQLConnection()">
+                                            <i class="fas fa-plug"></i> Testar Conexão
+                                        </button>
+                                        <button class="btn btn-success" onclick="financeAI.saveMySQLConfig()" id="saveMySQLBtn" disabled>
+                                            <i class="fas fa-save"></i> Salvar e Migrar
+                                        </button>
+                                        <button class="btn btn-warning" onclick="financeAI.switchToLocal()">
+                                            <i class="fas fa-arrow-left"></i> Voltar ao Local
+                                        </button>
+                                    </div>
+                                    <div class="mysql-status" id="mysqlStatus">
+                                        <span class="status-indicator" id="mysqlStatusIndicator">
+                                            <i class="fas fa-circle text-secondary"></i> Não configurado
+                                        </span>
+                                    </div>
                                 </div>
                             </div>
 
@@ -403,9 +482,10 @@
     </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+    <script src="https://cdn.emailjs.com/dist/email.min.js"></script>
     <script src="storage.js"></script>
     <script src="ai-engine.js"></script>
-    <script src="whatsapp-integration.js"></script>
+    <script src="email-integration.js"></script>
     <script src="file-processor.js"></script>
     <script src="app.js"></script>
 </body>

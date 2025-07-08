@@ -5,192 +5,328 @@ class FinanceAI {
         this.revenues = [];
         this.notifications = [];
         this.settings = {
-            whatsappEnabled: true,
-            whatsappNumber: '',
+            emailEnabled: true,
+            emailAddress: '',
             reminderDays: 3,
             aiProcessing: true,
             smartCategorization: true,
-            duplicateDetection: true
+            duplicateDetection: true,
+            autoBackup: true,
+            defaultReportPeriod: 90,
+            showPaidBills: true,
+            compactView: false
         };
         
         this.aiEngine = new AIEngine();
-        this.whatsappIntegration = new WhatsAppIntegration();
+        this.emailIntegration = new EmailIntegration();
         this.fileProcessor = new FileProcessor();
         this.storageManager = new StorageManager();
         this.isInitialized = false;
+        this.loadingOverlay = null;
+        this.performanceMetrics = {};
         
         this.init();
     }
 
     async init() {
         try {
+            this.showLoadingOverlay('Inicializando sistema...');
+            
             await this.loadData();
             this.setupEventListeners();
             this.setupNavigation();
             this.renderDashboard();
-            this.setupFileUpload();
             this.scheduleNotifications();
+            this.loadDatabaseSettings();
+            this.enableAutoSave();
+            this.setupPerformanceMonitoring();
+            this.verifyDataIntegrityPeriodically();
+            
+            this.hideLoadingOverlay();
             this.isInitialized = true;
+            
+            this.showToast('Sistema inicializado com sucesso!', 'success');
         } catch (error) {
+            this.hideLoadingOverlay();
             console.error('Erro na inicialização:', error);
             this.showToast('Erro ao inicializar o sistema', 'error');
+            this.handleError(error, 'Inicialização');
+        }
+    }
+
+    showLoadingOverlay(message = 'Carregando...') {
+        try {
+            if (this.loadingOverlay) {
+                this.hideLoadingOverlay();
+            }
+            
+            this.loadingOverlay = document.createElement('div');
+            this.loadingOverlay.className = 'loading-overlay';
+            this.loadingOverlay.innerHTML = `
+                <div style="text-align: center;">
+                    <div class="loading-spinner"></div>
+                    <p style="margin-top: 1rem; color: var(--text-primary); font-weight: 500;">${message}</p>
+                </div>
+            `;
+            
+            document.body.appendChild(this.loadingOverlay);
+            
+            // Force reflow then show
+            this.loadingOverlay.offsetHeight;
+            this.loadingOverlay.classList.add('show');
+        } catch (error) {
+            console.error('Erro ao mostrar loading overlay:', error);
+        }
+    }
+
+    hideLoadingOverlay() {
+        try {
+            if (this.loadingOverlay) {
+                this.loadingOverlay.classList.remove('show');
+                setTimeout(() => {
+                    if (this.loadingOverlay && this.loadingOverlay.parentNode) {
+                        this.loadingOverlay.parentNode.removeChild(this.loadingOverlay);
+                    }
+                    this.loadingOverlay = null;
+                }, 300);
+            }
+        } catch (error) {
+            console.error('Erro ao esconder loading overlay:', error);
+        }
+    }
+
+    showToast(message, type = 'info', duration = 4000) {
+        try {
+            // Remove existing toasts
+            const existingToasts = document.querySelectorAll('.toast');
+            existingToasts.forEach(toast => toast.remove());
+
+            const toast = document.createElement('div');
+            toast.className = `toast toast-${type}`;
+            toast.innerHTML = `
+                <div style="display: flex; align-items: center; gap: 0.75rem;">
+                    <i class="fas fa-${this.getToastIcon(type)}"></i>
+                    <span>${this.escapeHtml(message)}</span>
+                </div>
+            `;
+
+            document.body.appendChild(toast);
+
+            // Auto remove after duration
+            setTimeout(() => {
+                if (toast.parentNode) {
+                    toast.style.opacity = '0';
+                    toast.style.transform = 'translateX(100%)';
+                    setTimeout(() => {
+                        if (toast.parentNode) {
+                            toast.parentNode.removeChild(toast);
+                        }
+                    }, 300);
+                }
+            }, duration);
+
+            // Click to dismiss
+            toast.addEventListener('click', () => {
+                if (toast.parentNode) {
+                    toast.style.opacity = '0';
+                    toast.style.transform = 'translateX(100%)';
+                    setTimeout(() => {
+                        if (toast.parentNode) {
+                            toast.parentNode.removeChild(toast);
+                        }
+                    }, 300);
+                }
+            });
+        } catch (error) {
+            console.error('Erro ao mostrar toast:', error);
+        }
+    }
+
+    getToastIcon(type) {
+        const icons = {
+            'success': 'check-circle',
+            'error': 'exclamation-circle',
+            'warning': 'exclamation-triangle',
+            'info': 'info-circle'
+        };
+        return icons[type] || 'info-circle';
+    }
+
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    handleError(error, context = '') {
+        try {
+            console.error(`Erro em ${context}:`, error);
+            
+            // Log to performance metrics if available
+            if (this.performanceMetrics) {
+                if (!this.performanceMetrics.errors) {
+                    this.performanceMetrics.errors = [];
+                }
+                this.performanceMetrics.errors.push({
+                    context,
+                    message: error.message,
+                    timestamp: new Date().toISOString()
+                });
+                
+                // Keep only last 50 errors
+                if (this.performanceMetrics.errors.length > 50) {
+                    this.performanceMetrics.errors = this.performanceMetrics.errors.slice(-50);
+                }
+            }
+        } catch (err) {
+            console.error('Erro no manipulador de erro:', err);
+        }
+    }
+
+    async measureAsyncPerformance(name, asyncFunction) {
+        const start = performance.now();
+        try {
+            const result = await asyncFunction();
+            const end = performance.now();
+            
+            if (!this.performanceMetrics.operations) {
+                this.performanceMetrics.operations = {};
+            }
+            
+            this.performanceMetrics.operations[name] = {
+                duration: Math.round(end - start),
+                timestamp: new Date().toISOString(),
+                success: true
+            };
+            
+            return result;
+        } catch (error) {
+            const end = performance.now();
+            
+            if (!this.performanceMetrics.operations) {
+                this.performanceMetrics.operations = {};
+            }
+            
+            this.performanceMetrics.operations[name] = {
+                duration: Math.round(end - start),
+                timestamp: new Date().toISOString(),
+                success: false,
+                error: error.message
+            };
+            
+            throw error;
+        }
+    }
+
+    async verifyDataIntegrity() {
+        try {
+            const issues = [];
+            
+            // Check bills integrity
+            if (Array.isArray(this.bills)) {
+                this.bills.forEach((bill, index) => {
+                    if (!this.validateBillData(bill)) {
+                        issues.push(`Bill at index ${index} has invalid data`);
+                    }
+                });
+            }
+            
+            // Check invoices integrity
+            if (Array.isArray(this.invoices)) {
+                this.invoices.forEach((invoice, index) => {
+                    if (!this.validateInvoiceData(invoice)) {
+                        issues.push(`Invoice at index ${index} has invalid data`);
+                    }
+                });
+            }
+            
+            // Check revenues integrity
+            if (Array.isArray(this.revenues)) {
+                this.revenues.forEach((revenue, index) => {
+                    if (!this.validateRevenueData(revenue)) {
+                        issues.push(`Revenue at index ${index} has invalid data`);
+                    }
+                });
+            }
+            
+            return {
+                isValid: issues.length === 0,
+                issues: issues
+            };
+        } catch (error) {
+            return {
+                isValid: false,
+                issues: [`Integrity check failed: ${error.message}`]
+            };
+        }
+    }
+
+    validateBillData(bill) {
+        try {
+            return bill && 
+                   typeof bill.id !== 'undefined' &&
+                   typeof bill.name === 'string' && bill.name.trim() !== '' &&
+                   typeof bill.amount === 'number' && bill.amount >= 0 &&
+                   typeof bill.dueDate === 'string' && !isNaN(new Date(bill.dueDate).getTime()) &&
+                   ['pending', 'paid', 'overdue'].includes(bill.status);
+        } catch (error) {
+            return false;
+        }
+    }
+
+    validateInvoiceData(invoice) {
+        try {
+            return invoice && 
+                   typeof invoice.id !== 'undefined' &&
+                   typeof invoice.number === 'string' && invoice.number.trim() !== '' &&
+                   typeof invoice.supplier === 'string' && invoice.supplier.trim() !== '' &&
+                   typeof invoice.amount === 'number' && invoice.amount >= 0 &&
+                   typeof invoice.date === 'string' && !isNaN(new Date(invoice.date).getTime());
+        } catch (error) {
+            return false;
+        }
+    }
+
+    validateRevenueData(revenue) {
+        try {
+            return revenue && 
+                   typeof revenue.id !== 'undefined' &&
+                   typeof revenue.description === 'string' && revenue.description.trim() !== '' &&
+                   typeof revenue.amount === 'number' && revenue.amount >= 0 &&
+                   typeof revenue.date === 'string' && !isNaN(new Date(revenue.date).getTime());
+        } catch (error) {
+            return false;
         }
     }
 
     async loadData() {
         try {
-            // Load data using the storage manager
-            this.bills = await this.storageManager.loadData('bills') || [];
-            this.invoices = await this.storageManager.loadData('invoices') || [];
-            this.revenues = await this.storageManager.loadData('revenues') || [];
+            const [bills, invoices, revenues, settings] = await Promise.all([
+                this.storageManager.loadData('bills'),
+                this.storageManager.loadData('invoices'),
+                this.storageManager.loadData('revenues'),
+                this.loadSettings()
+            ]);
 
-            // Validate and filter data
-            this.bills = this.bills.filter(bill => this.validateBillData(bill));
-            this.invoices = this.invoices.filter(invoice => this.validateInvoiceData(invoice));
-            this.revenues = this.revenues.filter(revenue => this.validateRevenueData(revenue));
-
-            // Load settings
-            for (const [key, defaultValue] of Object.entries(this.settings)) {
-                this.settings[key] = await this.storageManager.loadSetting(key, defaultValue);
+            this.bills = Array.isArray(bills) ? bills : [];
+            this.invoices = Array.isArray(invoices) ? invoices : [];
+            this.revenues = Array.isArray(revenues) ? revenues : [];
+            
+            if (settings && typeof settings === 'object') {
+                this.settings = { ...this.settings, ...settings };
             }
 
-            // If no data exists, create demo data
-            if (this.bills.length === 0) {
-                this.bills = [
-                    {
-                        id: 1,
-                        name: 'Energia Elétrica',
-                        amount: 450.30,
-                        dueDate: '2024-01-15',
-                        category: 'utilities',
-                        status: 'pending',
-                        barcode: '8364000012345678901234567890123456789012',
-                        createdAt: new Date().toISOString()
-                    },
-                    {
-                        id: 2,
-                        name: 'Aluguel',
-                        amount: 2500.00,
-                        dueDate: '2024-01-10',
-                        category: 'rent',
-                        status: 'overdue',
-                        barcode: '8364000012345678901234567890123456789013',
-                        createdAt: new Date().toISOString()
-                    },
-                    {
-                        id: 3,
-                        name: 'Internet',
-                        amount: 89.90,
-                        dueDate: '2024-01-20',
-                        category: 'utilities',
-                        status: 'paid',
-                        barcode: '8364000012345678901234567890123456789014',
-                        createdAt: new Date().toISOString()
-                    }
-                ];
-            }
-
-            if (this.invoices.length === 0) {
-                this.invoices = [
-                    {
-                        id: 1,
-                        number: 'NF-001',
-                        supplier: 'Fornecedor ABC',
-                        amount: 1250.00,
-                        date: '2024-01-05',
-                        category: 'supplies',
-                        status: 'received',
-                        createdAt: new Date().toISOString()
-                    },
-                    {
-                        id: 2,
-                        number: 'NF-002',
-                        supplier: 'Serviços XYZ',
-                        amount: 850.00,
-                        date: '2024-01-08',
-                        category: 'services',
-                        status: 'pending',
-                        createdAt: new Date().toISOString()
-                    }
-                ];
-            }
-
-            if (this.revenues.length === 0) {
-                this.revenues = [
-                    {
-                        id: 1,
-                        description: 'Venda de Produto A',
-                        amount: 3500.00,
-                        date: '2024-01-05',
-                        category: 'sales',
-                        source: 'Cliente ABC Ltda',
-                        notes: 'Venda realizada via e-commerce',
-                        createdAt: new Date().toISOString()
-                    },
-                    {
-                        id: 2,
-                        description: 'Consultoria em TI',
-                        amount: 2800.00,
-                        date: '2024-01-10',
-                        category: 'services',
-                        source: 'Empresa XYZ',
-                        notes: 'Consultoria em infraestrutura',
-                        createdAt: new Date().toISOString()
-                    }
-                ];
-            }
-
-            await this.saveData();
+            console.log('Dados carregados:', {
+                bills: this.bills.length,
+                invoices: this.invoices.length,
+                revenues: this.revenues.length
+            });
         } catch (error) {
             console.error('Erro ao carregar dados:', error);
-            this.showToast('Erro ao carregar dados salvos', 'error');
-            // Reset to default data if loading fails
             this.bills = [];
             this.invoices = [];
             this.revenues = [];
         }
-    }
-
-    validateBillData(bill) {
-        return (
-            bill &&
-            typeof bill.id !== 'undefined' &&
-            typeof bill.name === 'string' &&
-            typeof bill.amount === 'number' &&
-            bill.amount >= 0 &&
-            typeof bill.dueDate === 'string' &&
-            typeof bill.category === 'string' &&
-            typeof bill.status === 'string' &&
-            typeof bill.createdAt === 'string'
-        );
-    }
-
-    validateInvoiceData(invoice) {
-        return (
-            invoice &&
-            typeof invoice.id !== 'undefined' &&
-            typeof invoice.number === 'string' &&
-            typeof invoice.supplier === 'string' &&
-            typeof invoice.amount === 'number' &&
-            invoice.amount >= 0 &&
-            typeof invoice.date === 'string' &&
-            typeof invoice.category === 'string' &&
-            typeof invoice.status === 'string' &&
-            typeof invoice.createdAt === 'string'
-        );
-    }
-
-    validateRevenueData(revenue) {
-        return (
-            revenue &&
-            typeof revenue.id !== 'undefined' &&
-            typeof revenue.description === 'string' &&
-            typeof revenue.amount === 'number' &&
-            revenue.amount >= 0 &&
-            typeof revenue.date === 'string' &&
-            typeof revenue.category === 'string' &&
-            typeof revenue.createdAt === 'string'
-        );
     }
 
     async saveData() {
@@ -200,168 +336,1277 @@ class FinanceAI {
                 this.storageManager.saveData('invoices', this.invoices),
                 this.storageManager.saveData('revenues', this.revenues)
             ]);
-
-            // Save settings
-            for (const [key, value] of Object.entries(this.settings)) {
-                await this.storageManager.saveSetting(key, value);
-            }
+            return true;
         } catch (error) {
             console.error('Erro ao salvar dados:', error);
-            this.showToast('Erro ao salvar dados', 'error');
+            throw error;
+        }
+    }
+
+    async loadSettings() {
+        try {
+            const savedSettings = await this.storageManager.loadSetting('userSettings');
+            return savedSettings || {};
+        } catch (error) {
+            console.error('Erro ao carregar configurações:', error);
+            return {};
+        }
+    }
+
+    async saveSettings() {
+        try {
+            await this.storageManager.saveSetting('userSettings', this.settings);
+        } catch (error) {
+            console.error('Erro ao salvar configurações:', error);
+        }
+    }
+
+    enableAutoSave() {
+        try {
+            // Auto-save every 30 seconds
+            setInterval(async () => {
+                try {
+                    await this.saveData();
+                    await this.saveSettings();
+                } catch (error) {
+                    console.error('Erro no auto-save:', error);
+                }
+            }, 30000);
+        } catch (error) {
+            console.error('Erro ao configurar auto-save:', error);
         }
     }
 
     setupEventListeners() {
         try {
             // Form submissions
-            const billForm = document.getElementById('addBillForm');
-            const invoiceForm = document.getElementById('addInvoiceForm');
-            const revenueForm = document.getElementById('addRevenueForm');
-            
-            if (billForm) {
-                billForm.addEventListener('submit', (e) => {
-                    e.preventDefault();
-                    this.addBill();
-                });
+            const addBillForm = document.getElementById('addBillForm');
+            if (addBillForm) {
+                addBillForm.addEventListener('submit', (e) => this.handleAddBill(e));
             }
 
-            if (invoiceForm) {
-                invoiceForm.addEventListener('submit', (e) => {
-                    e.preventDefault();
-                    this.addInvoice();
-                });
+            const addInvoiceForm = document.getElementById('addInvoiceForm');
+            if (addInvoiceForm) {
+                addInvoiceForm.addEventListener('submit', (e) => this.handleAddInvoice(e));
             }
 
-            if (revenueForm) {
-                revenueForm.addEventListener('submit', (e) => {
-                    e.preventDefault();
-                    this.addRevenue();
-                });
+            const addRevenueForm = document.getElementById('addRevenueForm');
+            if (addRevenueForm) {
+                addRevenueForm.addEventListener('submit', (e) => this.handleAddRevenue(e));
             }
 
-            // Settings with null checks
-            const whatsappEnabledEl = document.getElementById('whatsappEnabled');
-            const whatsappNumberEl = document.getElementById('whatsappNumber');
-            const reminderDaysEl = document.getElementById('reminderDays');
-
-            if (whatsappEnabledEl) {
-                whatsappEnabledEl.addEventListener('change', async (e) => {
-                    this.settings.whatsappEnabled = e.target.checked;
-                    await this.saveData();
-                });
-            }
-
-            if (whatsappNumberEl) {
-                whatsappNumberEl.addEventListener('input', async (e) => {
-                    this.settings.whatsappNumber = e.target.value;
-                    await this.saveData();
-                });
-            }
-
-            if (reminderDaysEl) {
-                reminderDaysEl.addEventListener('change', async (e) => {
-                    this.settings.reminderDays = parseInt(e.target.value) || 3;
-                    await this.saveData();
-                });
-            }
-
-            ['aiProcessing', 'smartCategorization', 'duplicateDetection'].forEach(setting => {
-                const element = document.getElementById(setting);
-                if (element) {
-                    element.addEventListener('change', async (e) => {
-                        this.settings[setting] = e.target.checked;
-                        await this.saveData();
-                    });
+            // Modal close events
+            document.addEventListener('click', (e) => {
+                if (e.target.classList.contains('modal')) {
+                    this.closeAllModals();
                 }
             });
 
-            // Load settings values
-            this.loadSettings();
+            // Keyboard shortcuts
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape') {
+                    this.closeAllModals();
+                }
+            });
         } catch (error) {
             console.error('Erro ao configurar event listeners:', error);
         }
     }
 
-    loadSettings() {
+    setupNavigation() {
         try {
-            const elements = {
-                whatsappEnabled: document.getElementById('whatsappEnabled'),
-                whatsappNumber: document.getElementById('whatsappNumber'),
-                reminderDays: document.getElementById('reminderDays'),
-                aiProcessing: document.getElementById('aiProcessing'),
-                smartCategorization: document.getElementById('smartCategorization'),
-                duplicateDetection: document.getElementById('duplicateDetection')
-            };
-
-            Object.entries(elements).forEach(([key, element]) => {
-                if (element && this.settings.hasOwnProperty(key)) {
-                    if (element.type === 'checkbox') {
-                        element.checked = this.settings[key];
-                    } else {
-                        element.value = this.settings[key];
+            const navLinks = document.querySelectorAll('.nav-link');
+            navLinks.forEach(link => {
+                link.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    const href = link.getAttribute('href');
+                    if (href) {
+                        this.showSection(href.substring(1));
                     }
-                }
+                });
             });
         } catch (error) {
-            console.error('Erro ao carregar configurações:', error);
+            console.error('Erro ao configurar navegação:', error);
         }
     }
 
-    setupNavigation() {
-        const navLinks = document.querySelectorAll('.nav-link');
-        const sections = document.querySelectorAll('.section');
-
-        navLinks.forEach(link => {
-            link.addEventListener('click', (e) => {
-                e.preventDefault();
-                const target = link.getAttribute('href').substring(1);
-                
-                // Update active nav
-                navLinks.forEach(l => l.classList.remove('active'));
-                link.classList.add('active');
-
-                // Update active section
-                sections.forEach(s => s.classList.remove('active'));
-                document.getElementById(`${target}-section`).classList.add('active');
-
-                // Update page title
-                const title = link.textContent.trim();
-                document.getElementById('page-title').textContent = title;
-
-                // Render section content
-                this.renderSection(target);
+    showSection(sectionName) {
+        try {
+            // Hide all sections
+            document.querySelectorAll('.section').forEach(section => {
+                section.classList.remove('active');
             });
-        });
+
+            // Show target section
+            const targetSection = document.getElementById(`${sectionName}-section`);
+            if (targetSection) {
+                targetSection.classList.add('active');
+            }
+
+            // Update navigation
+            document.querySelectorAll('.nav-link').forEach(link => {
+                link.classList.remove('active');
+            });
+
+            const activeLink = document.querySelector(`.nav-link[href="#${sectionName}"]`);
+            if (activeLink) {
+                activeLink.classList.add('active');
+            }
+
+            // Update page title
+            const pageTitle = document.getElementById('page-title');
+            if (pageTitle) {
+                const titles = {
+                    'dashboard': 'Dashboard',
+                    'bills': 'Gestão de Boletos',
+                    'invoices': 'Notas Fiscais',
+                    'revenues': 'Receitas',
+                    'notifications': 'Notificações',
+                    'settings': 'Configurações'
+                };
+                pageTitle.textContent = titles[sectionName] || 'FinanceAI';
+            }
+
+            // Render section content
+            this.renderSectionContent(sectionName);
+        } catch (error) {
+            console.error('Erro ao mostrar seção:', error);
+        }
     }
 
-    renderSection(section) {
-        switch (section) {
-            case 'dashboard':
-                this.renderDashboard();
-                break;
-            case 'bills':
-                this.renderBills();
-                break;
-            case 'invoices':
-                this.renderInvoices();
-                break;
-            case 'revenues':
-                this.renderRevenues();
-                break;
-            case 'notifications':
-                this.renderNotifications();
-                break;
+    renderSectionContent(sectionName) {
+        try {
+            switch (sectionName) {
+                case 'dashboard':
+                    this.renderDashboard();
+                    break;
+                case 'bills':
+                    this.renderBills();
+                    break;
+                case 'invoices':
+                    this.renderInvoices();
+                    break;
+                case 'revenues':
+                    this.renderRevenues();
+                    break;
+                case 'notifications':
+                    this.renderNotifications();
+                    break;
+                case 'settings':
+                    this.renderSettings();
+                    break;
+            }
+        } catch (error) {
+            console.error(`Erro ao renderizar seção ${sectionName}:`, error);
+        }
+    }
+
+    closeAllModals() {
+        try {
+            document.querySelectorAll('.modal').forEach(modal => {
+                modal.classList.remove('active');
+            });
+            
+            // Reset editing states
+            delete this.editingBillId;
+            delete this.editingInvoiceId;
+            delete this.editingRevenueId;
+        } catch (error) {
+            console.error('Erro ao fechar modais:', error);
+        }
+    }
+
+    async clearAllData() {
+        try {
+            if (!confirm('Tem certeza que deseja limpar todos os dados? Esta ação não pode ser desfeita.')) {
+                return;
+            }
+
+            this.showLoadingOverlay('Limpando dados...');
+            
+            // Clear local data
+            this.bills = [];
+            this.invoices = [];
+            this.revenues = [];
+            this.notifications = [];
+            
+            // Clear storage
+            await this.storageManager.clearAllData();
+            
+            // Re-render all sections
+            this.renderDashboard();
+            this.renderBills();
+            this.renderInvoices();
+            this.renderRevenues();
+            this.renderNotifications();
+            
+            this.hideLoadingOverlay();
+            this.showToast('Todos os dados foram limpos com sucesso!', 'success');
+        } catch (error) {
+            this.hideLoadingOverlay();
+            console.error('Erro ao limpar dados:', error);
+            this.showToast('Erro ao limpar dados: ' + error.message, 'error');
+        }
+    }
+
+    async generateFinancialReport() {
+        try {
+            this.showLoadingOverlay('Gerando relatório financeiro...');
+            
+            const reportData = await this.measureAsyncPerformance('generateReport', async () => {
+                return this.calculateFinancialMetrics();
+            });
+            
+            this.hideLoadingOverlay();
+            this.showFinancialReportModal(reportData);
+        } catch (error) {
+            this.hideLoadingOverlay();
+            console.error('Erro ao gerar relatório financeiro:', error);
+            this.showToast('Erro ao gerar relatório: ' + error.message, 'error');
+        }
+    }
+
+    async calculateFinancialMetrics() {
+        try {
+            const now = new Date();
+            const currentMonth = now.getMonth();
+            const currentYear = now.getFullYear();
+            
+            // Filter data by selected period
+            const periodDays = this.settings.defaultReportPeriod || 90;
+            const startDate = new Date();
+            startDate.setDate(startDate.getDate() - periodDays);
+            
+            const filteredBills = this.bills.filter(bill => {
+                if (!bill || !bill.createdAt) return false;
+                const billDate = new Date(bill.createdAt);
+                return billDate >= startDate;
+            });
+            
+            const filteredInvoices = this.invoices.filter(invoice => {
+                if (!invoice || !invoice.createdAt) return false;
+                const invoiceDate = new Date(invoice.createdAt);
+                return invoiceDate >= startDate;
+            });
+            
+            const filteredRevenues = this.revenues.filter(revenue => {
+                if (!revenue || !revenue.createdAt) return false;
+                const revenueDate = new Date(revenue.createdAt);
+                return revenueDate >= startDate;
+            });
+            
+            // Calculate totals
+            const totalRevenues = filteredRevenues.reduce((sum, revenue) => sum + (revenue.amount || 0), 0);
+            const totalBills = filteredBills.reduce((sum, bill) => sum + (bill.amount || 0), 0);
+            const totalInvoices = filteredInvoices.reduce((sum, invoice) => sum + (invoice.amount || 0), 0);
+            const totalExpenses = totalBills + totalInvoices;
+            const netBalance = totalRevenues - totalExpenses;
+            
+            // Calculate by status
+            const paidBills = filteredBills.filter(bill => bill.status === 'paid');
+            const pendingBills = filteredBills.filter(bill => bill.status === 'pending');
+            const overdueBills = filteredBills.filter(bill => this.isBillOverdue(bill));
+            
+            const totalPaid = paidBills.reduce((sum, bill) => sum + (bill.amount || 0), 0);
+            const totalPending = pendingBills.reduce((sum, bill) => sum + (bill.amount || 0), 0);
+            const totalOverdue = overdueBills.reduce((sum, bill) => sum + (bill.amount || 0), 0);
+            
+            // Calculate by category
+            const categoryBreakdown = this.calculateCategoryBreakdown(filteredBills, filteredInvoices, filteredRevenues);
+            
+            // Calculate monthly trends
+            const monthlyTrends = this.calculateMonthlyTrends();
+            
+            return {
+                period: `${periodDays} dias`,
+                summary: {
+                    totalRevenues,
+                    totalExpenses,
+                    netBalance,
+                    totalBills: filteredBills.length,
+                    totalInvoices: filteredInvoices.length,
+                    totalRevenues: filteredRevenues.length
+                },
+                billsStatus: {
+                    paid: { count: paidBills.length, amount: totalPaid },
+                    pending: { count: pendingBills.length, amount: totalPending },
+                    overdue: { count: overdueBills.length, amount: totalOverdue }
+                },
+                categoryBreakdown,
+                monthlyTrends,
+                generatedAt: new Date().toISOString()
+            };
+        } catch (error) {
+            console.error('Erro ao calcular métricas financeiras:', error);
+            throw error;
+        }
+    }
+
+    calculateCategoryBreakdown(bills, invoices, revenues) {
+        try {
+            const categories = {};
+            
+            // Process bills
+            bills.forEach(bill => {
+                if (!bill || !bill.category) return;
+                const category = bill.category;
+                if (!categories[category]) {
+                    categories[category] = { count: 0, amount: 0, type: 'expense' };
+                }
+                categories[category].count++;
+                categories[category].amount += bill.amount || 0;
+            });
+            
+            // Process invoices
+            invoices.forEach(invoice => {
+                if (!invoice || !invoice.category) return;
+                const category = invoice.category;
+                if (!categories[category]) {
+                    categories[category] = { count: 0, amount: 0, type: 'expense' };
+                }
+                categories[category].count++;
+                categories[category].amount += invoice.amount || 0;
+            });
+            
+            // Process revenues
+            revenues.forEach(revenue => {
+                if (!revenue || !revenue.category) return;
+                const category = revenue.category;
+                if (!categories[category]) {
+                    categories[category] = { count: 0, amount: 0, type: 'income' };
+                }
+                categories[category].count++;
+                categories[category].amount += revenue.amount || 0;
+            });
+            
+            // Convert to array and sort by amount
+            return Object.entries(categories)
+                .map(([category, data]) => ({
+                    category,
+                    ...data,
+                    categoryName: this.getCategoryText(category)
+                }))
+                .sort((a, b) => b.amount - a.amount);
+        } catch (error) {
+            console.error('Erro ao calcular breakdown por categoria:', error);
+            return [];
+        }
+    }
+
+    calculateMonthlyTrends() {
+        try {
+            const trends = {};
+            
+            // Get last 6 months
+            for (let i = 5; i >= 0; i--) {
+                const date = new Date();
+                date.setMonth(date.getMonth() - i);
+                const monthKey = `${date.getFullYear()}-${date.getMonth()}`;
+                const monthName = date.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+                
+                trends[monthKey] = {
+                    name: monthName,
+                    revenues: 0,
+                    expenses: 0,
+                    balance: 0
+                };
+            }
+            
+            // Calculate revenues
+            this.revenues.forEach(revenue => {
+                if (!revenue || !revenue.date) return;
+                const date = new Date(revenue.date);
+                const monthKey = `${date.getFullYear()}-${date.getMonth()}`;
+                if (trends[monthKey]) {
+                    trends[monthKey].revenues += revenue.amount || 0;
+                }
+            });
+            
+            // Calculate expenses (bills + invoices)
+            [...this.bills, ...this.invoices].forEach(item => {
+                if (!item) return;
+                const date = new Date(item.dueDate || item.date);
+                if (isNaN(date.getTime())) return;
+                const monthKey = `${date.getFullYear()}-${date.getMonth()}`;
+                if (trends[monthKey]) {
+                    trends[monthKey].expenses += item.amount || 0;
+                }
+            });
+            
+            // Calculate balance
+            Object.keys(trends).forEach(monthKey => {
+                const trend = trends[monthKey];
+                trend.balance = trend.revenues - trend.expenses;
+            });
+            
+            return Object.values(trends);
+        } catch (error) {
+            console.error('Erro ao calcular tendências mensais:', error);
+            return [];
+        }
+    }
+
+    showFinancialReportModal(reportData) {
+        try {
+            // Create modal
+            const modal = document.createElement('div');
+            modal.className = 'modal active';
+            modal.innerHTML = `
+                <div class="modal-content report-modal">
+                    <div class="modal-header">
+                        <h3><i class="fas fa-chart-bar"></i> Relatório Financeiro Detalhado</h3>
+                        <button class="close-btn" onclick="this.closest('.modal').remove()">&times;</button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="report-summary">
+                            <h4>Resumo Geral (${reportData.period})</h4>
+                            <div class="summary-grid">
+                                <div class="summary-item positive">
+                                    <i class="fas fa-arrow-up"></i>
+                                    <span class="label">Receitas</span>
+                                    <span class="value">R$ ${reportData.summary.totalRevenues.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                                </div>
+                                <div class="summary-item negative">
+                                    <i class="fas fa-arrow-down"></i>
+                                    <span class="label">Despesas</span>
+                                    <span class="value">R$ ${reportData.summary.totalExpenses.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                                </div>
+                                <div class="summary-item ${reportData.summary.netBalance >= 0 ? 'positive' : 'negative'}">
+                                    <i class="fas fa-balance-scale"></i>
+                                    <span class="label">Saldo Líquido</span>
+                                    <span class="value">R$ ${reportData.summary.netBalance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                                </div>
+                                <div class="summary-item neutral">
+                                    <i class="fas fa-file-alt"></i>
+                                    <span class="label">Total de Documentos</span>
+                                    <span class="value">${reportData.summary.totalBills + reportData.summary.totalInvoices + reportData.summary.totalRevenues}</span>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="report-status">
+                            <h4>Status dos Boletos</h4>
+                            <div class="status-grid">
+                                <div class="status-item success">
+                                    <i class="fas fa-check-circle"></i>
+                                    <span class="status-label">Pagos</span>
+                                    <span class="status-value">${reportData.billsStatus.paid.count}</span>
+                                    <small>R$ ${reportData.billsStatus.paid.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</small>
+                                </div>
+                                <div class="status-item warning">
+                                    <i class="fas fa-clock"></i>
+                                    <span class="status-label">Pendentes</span>
+                                    <span class="status-value">${reportData.billsStatus.pending.count}</span>
+                                    <small>R$ ${reportData.billsStatus.pending.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</small>
+                                </div>
+                                <div class="status-item danger">
+                                    <i class="fas fa-exclamation-triangle"></i>
+                                    <span class="status-label">Vencidos</span>
+                                    <span class="status-value">${reportData.billsStatus.overdue.count}</span>
+                                    <small>R$ ${reportData.billsStatus.overdue.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</small>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="report-categories">
+                            <h4>Análise por Categoria</h4>
+                            <div class="category-list">
+                                ${reportData.categoryBreakdown.map(cat => `
+                                    <div class="category-item">
+                                        <span class="category-name">${cat.categoryName}</span>
+                                        <span class="category-count">${cat.count} itens</span>
+                                        <span class="category-total">R$ ${cat.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                                        <span class="category-percentage">${((cat.amount / reportData.summary.totalExpenses) * 100).toFixed(1)}%</span>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                        
+                        <div class="report-trends">
+                            <h4>Tendências Mensais</h4>
+                            <div class="trends-list">
+                                ${reportData.monthlyTrends.map(trend => `
+                                    <div class="trend-item">
+                                        <strong>${trend.name}</strong>
+                                        <div class="trend-values">
+                                            <span class="trend-revenues">Receitas: R$ ${trend.revenues.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                                            <span class="trend-expenses">Despesas: R$ ${trend.expenses.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                                            <span class="trend-balance ${trend.balance >= 0 ? 'positive' : 'negative'}">
+                                                Saldo: R$ ${trend.balance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                            </span>
+                                        </div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn btn-info" onclick="financeAI.exportReport('${JSON.stringify(reportData).replace(/"/g, '&quot;')}')">
+                            <i class="fas fa-download"></i> Exportar Relatório
+                        </button>
+                        <button class="btn btn-secondary" onclick="this.closest('.modal').remove()">
+                            Fechar
+                        </button>
+                    </div>
+                </div>
+            `;
+            
+            document.body.appendChild(modal);
+        } catch (error) {
+            console.error('Erro ao mostrar modal de relatório:', error);
+            this.showToast('Erro ao exibir relatório', 'error');
+        }
+    }
+
+    async showSpendingInsights() {
+        try {
+            this.showLoadingOverlay('Analisando padrões de gastos...');
+            
+            const insights = await this.measureAsyncPerformance('generateInsights', async () => {
+                return this.generateSpendingInsights();
+            });
+            
+            this.hideLoadingOverlay();
+            this.showInsightsModal(insights);
+        } catch (error) {
+            this.hideLoadingOverlay();
+            console.error('Erro ao gerar insights:', error);
+            this.showToast('Erro ao gerar insights: ' + error.message, 'error');
+        }
+    }
+
+    async generateSpendingInsights() {
+        try {
+            const insights = [];
+            const now = new Date();
+            
+            // Insight 1: Overdue bills
+            const overdueBills = this.bills.filter(bill => this.isBillOverdue(bill));
+            if (overdueBills.length > 0) {
+                const totalOverdue = overdueBills.reduce((sum, bill) => sum + bill.amount, 0);
+                insights.push({
+                    type: 'danger',
+                    title: 'Boletos Vencidos',
+                    message: `Você tem ${overdueBills.length} boletos vencidos totalizando R$ ${totalOverdue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}. Priorize o pagamento para evitar juros e multas.`,
+                    priority: 'high'
+                });
+            }
+            
+            // Insight 2: High spending categories
+            const categoryTotals = {};
+            [...this.bills, ...this.invoices].forEach(item => {
+                if (!item || !item.category) return;
+                if (!categoryTotals[item.category]) categoryTotals[item.category] = 0;
+                categoryTotals[item.category] += item.amount || 0;
+            });
+            
+            const topCategory = Object.entries(categoryTotals)
+                .sort(([,a], [,b]) => b - a)[0];
+            
+            if (topCategory && topCategory[1] > 5000) {
+                insights.push({
+                    type: 'warning',
+                    title: 'Categoria com Maior Gasto',
+                    message: `A categoria "${this.getCategoryText(topCategory[0])}" representa o maior gasto com R$ ${topCategory[1].toLocaleString('pt-BR', { minimumFractionDigits: 2 })}. Considere revisar esses gastos.`,
+                    priority: 'medium'
+                });
+            }
+            
+            // Insight 3: Cashflow trend
+            const currentMonth = this.calculateMonthlyTrends().slice(-1)[0];
+            if (currentMonth && currentMonth.balance < 0) {
+                insights.push({
+                    type: 'warning',
+                    title: 'Fluxo de Caixa Negativo',
+                    message: `O saldo do mês atual está negativo em R$ ${Math.abs(currentMonth.balance).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}. Considere aumentar receitas ou reduzir despesas.`,
+                    priority: 'high'
+                });
+            }
+            
+            // Insight 4: Upcoming bills
+            const upcomingBills = this.bills.filter(bill => {
+                if (!bill || bill.status !== 'pending') return false;
+                const daysUntil = this.getDaysUntilDue(bill.dueDate);
+                return daysUntil > 0 && daysUntil <= 7;
+            });
+            
+            if (upcomingBills.length > 0) {
+                const totalUpcoming = upcomingBills.reduce((sum, bill) => sum + bill.amount, 0);
+                insights.push({
+                    type: 'info',
+                    title: 'Vencimentos Próximos',
+                    message: `${upcomingBills.length} boletos vencerão nos próximos 7 dias, totalizando R$ ${totalUpcoming.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}. Organize-se para os pagamentos.`,
+                    priority: 'medium'
+                });
+            }
+            
+            // Insight 5: Revenue vs expenses ratio
+            const totalRevenues = this.revenues.reduce((sum, revenue) => sum + (revenue.amount || 0), 0);
+            const totalExpenses = [...this.bills, ...this.invoices].reduce((sum, item) => sum + (item.amount || 0), 0);
+            
+            if (totalRevenues > 0) {
+                const ratio = (totalExpenses / totalRevenues) * 100;
+                if (ratio > 80) {
+                    insights.push({
+                        type: 'warning',
+                        title: 'Alto Percentual de Gastos',
+                        message: `Suas despesas representam ${ratio.toFixed(1)}% das receitas. Considere reduzir gastos ou aumentar receitas para melhorar sua saúde financeira.`,
+                        priority: 'medium'
+                    });
+                } else if (ratio < 50) {
+                    insights.push({
+                        type: 'success',
+                        title: 'Excelente Controle Financeiro',
+                        message: `Parabéns! Suas despesas representam apenas ${ratio.toFixed(1)}% das receitas. Continue mantendo esse bom controle financeiro.`,
+                        priority: 'low'
+                    });
+                }
+            }
+            
+            return insights;
+        } catch (error) {
+            console.error('Erro ao gerar insights de gastos:', error);
+            return [];
+        }
+    }
+
+    showInsightsModal(insights) {
+        try {
+            const modal = document.createElement('div');
+            modal.className = 'modal active';
+            modal.innerHTML = `
+                <div class="modal-content insights-modal">
+                    <div class="modal-header">
+                        <h3><i class="fas fa-lightbulb"></i> Insights de Gastos</h3>
+                        <button class="close-btn" onclick="this.closest('.modal').remove()">&times;</button>
+                    </div>
+                    <div class="modal-body">
+                        ${insights.length > 0 ? `
+                            <div class="insights-list">
+                                ${insights.map(insight => `
+                                    <div class="insight-item ${insight.type}">
+                                        <div class="insight-icon">
+                                            <i class="fas fa-${this.getInsightIcon(insight.type)}"></i>
+                                        </div>
+                                        <div class="insight-content">
+                                            <h4>${insight.title}</h4>
+                                            <p>${insight.message}</p>
+                                        </div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        ` : `
+                            <div style="text-align: center; padding: 2rem; color: var(--text-secondary);">
+                                <i class="fas fa-check-circle" style="font-size: 3rem; margin-bottom: 1rem; color: var(--success-color);"></i>
+                                <h4>Tudo sob controle!</h4>
+                                <p>Não foram identificados pontos de atenção em seus gastos no momento.</p>
+                            </div>
+                        `}
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn btn-secondary" onclick="this.closest('.modal').remove()">
+                            Fechar
+                        </button>
+                    </div>
+                </div>
+            `;
+            
+            document.body.appendChild(modal);
+        } catch (error) {
+            console.error('Erro ao mostrar modal de insights:', error);
+            this.showToast('Erro ao exibir insights', 'error');
+        }
+    }
+
+    getInsightIcon(type) {
+        const icons = {
+            'success': 'check-circle',
+            'warning': 'exclamation-triangle',
+            'danger': 'exclamation-circle',
+            'info': 'info-circle'
+        };
+        return icons[type] || 'info-circle';
+    }
+
+    async predictCashFlow() {
+        try {
+            this.showLoadingOverlay('Calculando previsões...');
+            
+            const predictions = await this.measureAsyncPerformance('predictCashFlow', async () => {
+                return this.calculateCashFlowPredictions();
+            });
+            
+            this.hideLoadingOverlay();
+            this.showPredictionModal(predictions);
+        } catch (error) {
+            this.hideLoadingOverlay();
+            console.error('Erro ao prever fluxo de caixa:', error);
+            this.showToast('Erro ao calcular previsões: ' + error.message, 'error');
+        }
+    }
+
+    async calculateCashFlowPredictions() {
+        try {
+            const predictions = [];
+            const now = new Date();
+            
+            // Predict next 3 months
+            for (let i = 1; i <= 3; i++) {
+                const futureDate = new Date(now);
+                futureDate.setMonth(futureDate.getMonth() + i);
+                
+                const monthName = futureDate.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+                
+                // Predict expenses based on pending bills and recurring patterns
+                const pendingBills = this.bills.filter(bill => {
+                    if (!bill || bill.status !== 'pending') return false;
+                    const dueDate = new Date(bill.dueDate);
+                    return dueDate.getMonth() === futureDate.getMonth() && 
+                           dueDate.getFullYear() === futureDate.getFullYear();
+                });
+                
+                const predictedExpenses = pendingBills.reduce((sum, bill) => sum + bill.amount, 0);
+                
+                // Predict revenues based on historical average
+                const historicalRevenues = this.revenues.filter(revenue => {
+                    if (!revenue || !revenue.date) return false;
+                    const revenueDate = new Date(revenue.date);
+                    return revenueDate.getMonth() === futureDate.getMonth();
+                });
+                
+                const avgRevenue = historicalRevenues.length > 0 
+                    ? historicalRevenues.reduce((sum, revenue) => sum + revenue.amount, 0) / historicalRevenues.length
+                    : 0;
+                
+                const predictedBalance = avgRevenue - predictedExpenses;
+                
+                predictions.push({
+                    month: monthName,
+                    predictedRevenues: avgRevenue,
+                    predictedExpenses: predictedExpenses,
+                    predictedBalance: predictedBalance,
+                    confidence: historicalRevenues.length > 0 ? 'Média' : 'Baixa',
+                    billsCount: pendingBills.length
+                });
+            }
+            
+            return predictions;
+        } catch (error) {
+            console.error('Erro ao calcular previsões:', error);
+            return [];
+        }
+    }
+
+    showPredictionModal(predictions) {
+        try {
+            const modal = document.createElement('div');
+            modal.className = 'modal active';
+            modal.innerHTML = `
+                <div class="modal-content prediction-modal">
+                    <div class="modal-header">
+                        <h3><i class="fas fa-crystal-ball"></i> Previsão de Fluxo de Caixa</h3>
+                        <button class="close-btn" onclick="this.closest('.modal').remove()">&times;</button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="prediction-disclaimer">
+                            <i class="fas fa-info-circle"></i>
+                            <strong>Importante:</strong> As previsões são baseadas em dados históricos e boletos pendentes. 
+                            Os valores reais podem variar significativamente.
+                        </div>
+                        
+                        <div class="prediction-list">
+                            ${predictions.map(prediction => `
+                                <div class="prediction-item">
+                                    <div class="prediction-header">
+                                        <h4>${prediction.month}</h4>
+                                        <span class="prediction-status ${prediction.predictedBalance >= 0 ? 'positive' : 'negative'}">
+                                            ${prediction.predictedBalance >= 0 ? 'Superávit' : 'Déficit'}
+                                        </span>
+                                    </div>
+                                    <div class="prediction-details">
+                                        <div class="prediction-row">
+                                            <span class="label">Receitas Previstas:</span>
+                                            <span class="value positive">R$ ${prediction.predictedRevenues.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                                        </div>
+                                        <div class="prediction-row">
+                                            <span class="label">Despesas Previstas:</span>
+                                            <span class="value negative">R$ ${prediction.predictedExpenses.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                                        </div>
+                                        <div class="prediction-row total">
+                                            <span class="label">Saldo Previsto:</span>
+                                            <span class="value ${prediction.predictedBalance >= 0 ? 'positive' : 'negative'}">
+                                                R$ ${prediction.predictedBalance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                            </span>
+                                        </div>
+                                        <div class="prediction-bills">
+                                            ${prediction.billsCount} boletos pendentes para este mês
+                                        </div>
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn btn-secondary" onclick="this.closest('.modal').remove()">
+                            Fechar
+                        </button>
+                    </div>
+                </div>
+            `;
+            
+            document.body.appendChild(modal);
+        } catch (error) {
+            console.error('Erro ao mostrar modal de previsão:', error);
+            this.showToast('Erro ao exibir previsões', 'error');
+        }
+    }
+
+    async exportReport(reportDataString) {
+        try {
+            const reportData = JSON.parse(reportDataString.replace(/&quot;/g, '"'));
+            
+            const reportText = `
+RELATÓRIO FINANCEIRO - ${new Date().toLocaleDateString('pt-BR')}
+${'='.repeat(50)}
+
+RESUMO GERAL (${reportData.period})
+${'-'.repeat(30)}
+Receitas: R$ ${reportData.summary.totalRevenues.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+Despesas: R$ ${reportData.summary.totalExpenses.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+Saldo Líquido: R$ ${reportData.summary.netBalance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+
+STATUS DOS BOLETOS
+${'-'.repeat(30)}
+Pagos: ${reportData.billsStatus.paid.count} (R$ ${reportData.billsStatus.paid.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })})
+Pendentes: ${reportData.billsStatus.pending.count} (R$ ${reportData.billsStatus.pending.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })})
+Vencidos: ${reportData.billsStatus.overdue.count} (R$ ${reportData.billsStatus.overdue.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })})
+
+ANÁLISE POR CATEGORIA
+${'-'.repeat(30)}
+${reportData.categoryBreakdown.map(cat => 
+    `${cat.categoryName}: R$ ${cat.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} (${cat.count} itens)`
+).join('\n')}
+
+Relatório gerado automaticamente pelo FinanceAI
+            `.trim();
+            
+            const blob = new Blob([reportText], { type: 'text/plain;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `relatorio-financeiro-${new Date().toISOString().split('T')[0]}.txt`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            
+            this.showToast('Relatório exportado com sucesso!', 'success');
+        } catch (error) {
+            console.error('Erro ao exportar relatório:', error);
+            this.showToast('Erro ao exportar relatório', 'error');
+        }
+    }
+
+    async createBackup() {
+        try {
+            this.showLoadingOverlay('Criando backup...');
+            
+            const backupData = await this.storageManager.exportData();
+            const backupInfo = {
+                ...backupData,
+                backupDate: new Date().toISOString(),
+                version: '1.0',
+                systemInfo: {
+                    storageMode: this.storageManager.getStorageMode(),
+                    totalBills: this.bills.length,
+                    totalInvoices: this.invoices.length,
+                    totalRevenues: this.revenues.length
+                }
+            };
+            
+            // Save backup info to local storage
+            localStorage.setItem('financeai_last_backup', JSON.stringify({
+                date: backupInfo.backupDate,
+                recordCount: backupInfo.systemInfo.totalBills + backupInfo.systemInfo.totalInvoices + backupInfo.systemInfo.totalRevenues
+            }));
+            
+            this.updateBackupInfo();
+            this.hideLoadingOverlay();
+            this.showToast('Backup criado com sucesso!', 'success');
+            
+        } catch (error) {
+            this.hideLoadingOverlay();
+            console.error('Erro ao criar backup:', error);
+            this.showToast('Erro ao criar backup: ' + error.message, 'error');
+        }
+    }
+
+    async downloadBackup() {
+        try {
+            this.showLoadingOverlay('Preparando backup para download...');
+            
+            const backupData = await this.storageManager.exportData();
+            const backupInfo = {
+                ...backupData,
+                backupDate: new Date().toISOString(),
+                version: '1.0'
+            };
+            
+            const blob = new Blob([JSON.stringify(backupInfo, null, 2)], { 
+                type: 'application/json' 
+            });
+            
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `financeai-backup-${new Date().toISOString().split('T')[0]}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            
+            this.hideLoadingOverlay();
+            this.showToast('Backup baixado com sucesso!', 'success');
+        } catch (error) {
+            this.hideLoadingOverlay();
+            console.error('Erro ao baixar backup:', error);
+            this.showToast('Erro ao baixar backup: ' + error.message, 'error');
+        }
+    }
+
+    updateBackupInfo() {
+        try {
+            const backupInfo = document.getElementById('backupInfo');
+            const lastBackupTime = document.getElementById('lastBackupTime');
+            
+            if (backupInfo && lastBackupTime) {
+                const savedBackup = localStorage.getItem('financeai_last_backup');
+                if (savedBackup) {
+                    const backup = JSON.parse(savedBackup);
+                    lastBackupTime.textContent = new Date(backup.date).toLocaleString('pt-BR');
+                } else {
+                    lastBackupTime.textContent = 'Nunca';
+                }
+            }
+        } catch (error) {
+            console.error('Erro ao atualizar info de backup:', error);
+        }
+    }
+
+    setupPerformanceMonitoring() {
+        try {
+            this.performanceMetrics = {
+                operations: {},
+                errors: [],
+                startTime: performance.now(),
+                lastUpdate: new Date().toISOString()
+            };
+            
+            // Monitor critical operations
+            const originalConsoleError = console.error;
+            console.error = (...args) => {
+                originalConsoleError.apply(console, args);
+                if (this.performanceMetrics && this.performanceMetrics.errors) {
+                    this.performanceMetrics.errors.push({
+                        message: args.join(' '),
+                        timestamp: new Date().toISOString(),
+                        stack: new Error().stack
+                    });
+                }
+            };
+        } catch (error) {
+            console.error('Erro ao configurar monitoramento de performance:', error);
+        }
+    }
+
+    verifyDataIntegrityPeriodically() {
+        try {
+            // Run integrity check every 10 minutes
+            setInterval(async () => {
+                try {
+                    const integrity = await this.verifyDataIntegrity();
+                    if (!integrity.isValid) {
+                        console.warn('Problemas de integridade detectados:', integrity.issues);
+                        // Could show a subtle notification to user
+                    }
+                } catch (error) {
+                    console.error('Erro na verificação de integridade:', error);
+                }
+            }, 600000); // 10 minutes
+        } catch (error) {
+            console.error('Erro ao configurar verificação de integridade:', error);
+        }
+    }
+
+    async handleAddBill(e) {
+        e.preventDefault();
+        
+        try {
+            const form = e.target;
+            const formData = new FormData(form);
+            
+            const billData = {
+                id: this.editingBillId || Date.now(),
+                name: formData.get('billName') || document.getElementById('billName').value,
+                amount: parseFloat(formData.get('billAmount') || document.getElementById('billAmount').value),
+                dueDate: formData.get('billDueDate') || document.getElementById('billDueDate').value,
+                category: formData.get('billCategory') || document.getElementById('billCategory').value,
+                barcode: formData.get('billBarcode') || document.getElementById('billBarcode').value,
+                status: 'pending',
+                createdAt: this.editingBillId ? 
+                    this.bills.find(b => b.id === this.editingBillId)?.createdAt || new Date().toISOString() :
+                    new Date().toISOString(),
+                updatedAt: new Date().toISOString()
+            };
+            
+            // Validation
+            if (!billData.name || !billData.amount || !billData.dueDate) {
+                this.showToast('Preencha todos os campos obrigatórios', 'error');
+                return;
+            }
+            
+            if (billData.amount <= 0) {
+                this.showToast('O valor deve ser maior que zero', 'error');
+                return;
+            }
+            
+            // Check if editing
+            if (this.editingBillId) {
+                const index = this.bills.findIndex(bill => bill.id === this.editingBillId);
+                if (index !== -1) {
+                    this.bills[index] = billData;
+                }
+                delete this.editingBillId;
+            } else {
+                this.bills.push(billData);
+            }
+            
+            await this.saveData();
+            this.renderBills();
+            closeModal('addBillModal');
+            this.showToast('Boleto salvo com sucesso!', 'success');
+            
+        } catch (error) {
+            console.error('Erro ao adicionar boleto:', error);
+            this.showToast('Erro ao salvar boleto: ' + error.message, 'error');
+        }
+    }
+
+    async handleAddInvoice(e) {
+        e.preventDefault();
+        
+        try {
+            const form = e.target;
+            const formData = new FormData(form);
+            
+            const invoiceData = {
+                id: this.editingInvoiceId || Date.now(),
+                number: formData.get('invoiceNumber') || document.getElementById('invoiceNumber').value,
+                supplier: formData.get('invoiceSupplier') || document.getElementById('invoiceSupplier').value,
+                amount: parseFloat(formData.get('invoiceAmount') || document.getElementById('invoiceAmount').value),
+                date: formData.get('invoiceDate') || document.getElementById('invoiceDate').value,
+                category: formData.get('invoiceCategory') || document.getElementById('invoiceCategory').value,
+                status: formData.get('invoiceStatus') || document.getElementById('invoiceStatus').value,
+                createdAt: this.editingInvoiceId ? 
+                    this.invoices.find(i => i.id === this.editingInvoiceId)?.createdAt || new Date().toISOString() :
+                    new Date().toISOString(),
+                updatedAt: new Date().toISOString()
+            };
+            
+            // Validation
+            if (!invoiceData.number || !invoiceData.supplier || !invoiceData.amount || !invoiceData.date) {
+                this.showToast('Preencha todos os campos obrigatórios', 'error');
+                return;
+            }
+            
+            if (invoiceData.amount <= 0) {
+                this.showToast('O valor deve ser maior que zero', 'error');
+                return;
+            }
+            
+            // Check if editing
+            if (this.editingInvoiceId) {
+                const index = this.invoices.findIndex(invoice => invoice.id === this.editingInvoiceId);
+                if (index !== -1) {
+                    this.invoices[index] = invoiceData;
+                }
+                delete this.editingInvoiceId;
+            } else {
+                this.invoices.push(invoiceData);
+            }
+            
+            await this.saveData();
+            this.renderInvoices();
+            closeModal('addInvoiceModal');
+            this.showToast('Nota fiscal salva com sucesso!', 'success');
+            
+        } catch (error) {
+            console.error('Erro ao adicionar nota fiscal:', error);
+            this.showToast('Erro ao salvar nota fiscal: ' + error.message, 'error');
+        }
+    }
+
+    async handleAddRevenue(e) {
+        e.preventDefault();
+        
+        try {
+            const form = e.target;
+            const formData = new FormData(form);
+            
+            const revenueData = {
+                id: this.editingRevenueId || Date.now(),
+                description: formData.get('revenueDescription') || document.getElementById('revenueDescription').value,
+                amount: parseFloat(formData.get('revenueAmount') || document.getElementById('revenueAmount').value),
+                date: formData.get('revenueDate') || document.getElementById('revenueDate').value,
+                category: formData.get('revenueCategory') || document.getElementById('revenueCategory').value,
+                source: formData.get('revenueSource') || document.getElementById('revenueSource').value,
+                notes: formData.get('revenueNotes') || document.getElementById('revenueNotes').value,
+                createdAt: this.editingRevenueId ? 
+                    this.revenues.find(r => r.id === this.editingRevenueId)?.createdAt || new Date().toISOString() :
+                    new Date().toISOString(),
+                updatedAt: new Date().toISOString()
+            };
+            
+            // Validation
+            if (!revenueData.description || !revenueData.amount || !revenueData.date) {
+                this.showToast('Preencha todos os campos obrigatórios', 'error');
+                return;
+            }
+            
+            if (revenueData.amount <= 0) {
+                this.showToast('O valor deve ser maior que zero', 'error');
+                return;
+            }
+            
+            // Check if editing
+            if (this.editingRevenueId) {
+                const index = this.revenues.findIndex(revenue => revenue.id === this.editingRevenueId);
+                if (index !== -1) {
+                    this.revenues[index] = revenueData;
+                }
+                delete this.editingRevenueId;
+            } else {
+                this.revenues.push(revenueData);
+            }
+            
+            await this.saveData();
+            this.renderRevenues();
+            closeModal('addRevenueModal');
+            this.showToast('Receita salva com sucesso!', 'success');
+            
+        } catch (error) {
+            console.error('Erro ao adicionar receita:', error);
+            this.showToast('Erro ao salvar receita: ' + error.message, 'error');
+        }
+    }
+
+    async markBillAsPaid(billId) {
+        try {
+            const bill = this.bills.find(b => b.id == billId);
+            if (!bill) {
+                this.showToast('Boleto não encontrado', 'error');
+                return;
+            }
+            
+            if (bill.status === 'paid') {
+                this.showToast('Boleto já está marcado como pago', 'warning');
+                return;
+            }
+            
+            bill.status = 'paid';
+            bill.paidAt = new Date().toISOString();
+            bill.updatedAt = new Date().toISOString();
+            
+            await this.saveData();
+            this.renderBills();
+            this.renderDashboard();
+            this.showToast(`Boleto "${bill.name}" marcado como pago!`, 'success');
+            
+        } catch (error) {
+            console.error('Erro ao marcar boleto como pago:', error);
+            this.showToast('Erro ao marcar boleto como pago', 'error');
+        }
+    }
+
+    editBill(billId) {
+        try {
+            const bill = this.bills.find(b => b.id == billId);
+            if (!bill) {
+                this.showToast('Boleto não encontrado', 'error');
+                return;
+            }
+            
+            // Set editing mode
+            this.editingBillId = billId;
+            
+            // Fill form with bill data
+            document.getElementById('billName').value = bill.name || '';
+            document.getElementById('billAmount').value = bill.amount || '';
+            document.getElementById('billDueDate').value = bill.dueDate || '';
+            document.getElementById('billCategory').value = bill.category || '';
+            document.getElementById('billBarcode').value = bill.barcode || '';
+            
+            // Open modal
+            openAddBillModal();
+            
+        } catch (error) {
+            console.error('Erro ao editar boleto:', error);
+            this.showToast('Erro ao carregar dados do boleto', 'error');
+        }
+    }
+
+    async deleteBill(billId) {
+        try {
+            const bill = this.bills.find(b => b.id == billId);
+            if (!bill) {
+                this.showToast('Boleto não encontrado', 'error');
+                return;
+            }
+            
+            if (!confirm(`Tem certeza que deseja excluir o boleto "${bill.name}"?`)) {
+                return;
+            }
+            
+            this.bills = this.bills.filter(b => b.id != billId);
+            await this.saveData();
+            this.renderBills();
+            this.renderDashboard();
+            this.showToast('Boleto excluído com sucesso!', 'success');
+            
+        } catch (error) {
+            console.error('Erro ao excluir boleto:', error);
+            this.showToast('Erro ao excluir boleto', 'error');
+        }
+    }
+
+    toggleDropdown(event, itemId) {
+        try {
+            event.stopPropagation();
+            
+            // Close all other dropdowns
+            document.querySelectorAll('.dropdown-content.show').forEach(dropdown => {
+                if (dropdown.id !== `dropdown-${itemId}`) {
+                    dropdown.classList.remove('show');
+                }
+            });
+            
+            // Toggle current dropdown
+            const dropdown = document.getElementById(`dropdown-${itemId}`);
+            if (dropdown) {
+                dropdown.classList.toggle('show');
+            }
+        } catch (error) {
+            console.error('Erro ao alternar dropdown:', error);
         }
     }
 
     renderDashboard() {
         try {
+            this.updateDashboardMetrics();
             this.renderCashflowChart();
             this.renderRecentActivities();
-            this.updateDashboardMetrics();
         } catch (error) {
             console.error('Erro ao renderizar dashboard:', error);
-            this.showToast('Erro ao carregar dashboard', 'error');
         }
     }
 
@@ -369,187 +1614,99 @@ class FinanceAI {
         try {
             const now = new Date();
             const upcomingBills = this.bills.filter(bill => {
-                if (!bill || !bill.dueDate || bill.status !== 'pending') return false;
+                if (!bill || bill.status !== 'pending') return false;
                 const dueDate = new Date(bill.dueDate);
-                if (isNaN(dueDate.getTime())) return false;
                 const daysDiff = Math.ceil((dueDate - now) / (1000 * 60 * 60 * 24));
-                return daysDiff <= this.settings.reminderDays && daysDiff >= 0;
+                return daysDiff <= 7 && daysDiff >= 0;
             });
 
-            const overdueBills = this.bills.filter(bill => {
-                if (!bill || !bill.dueDate || bill.status !== 'pending') return false;
-                const dueDate = new Date(bill.dueDate);
-                if (isNaN(dueDate.getTime())) return false;
-                return dueDate < now;
-            });
+            const totalPending = this.bills
+                .filter(bill => bill && bill.status === 'pending')
+                .reduce((sum, bill) => sum + (bill.amount || 0), 0);
 
-            const totalOpen = this.bills
-                .filter(bill => bill && (bill.status === 'pending' || bill.status === 'overdue') && typeof bill.amount === 'number')
-                .reduce((sum, bill) => sum + bill.amount, 0);
-
-            const currentMonth = now.getMonth();
-            const currentYear = now.getFullYear();
-            
-            // Calculate total revenues for current month
-            const revenuesThisMonth = this.revenues
-                .filter(revenue => {
-                    if (!revenue || !revenue.date) return false;
-                    const revenueDate = new Date(revenue.date);
-                    return revenueDate.getMonth() === currentMonth && revenueDate.getFullYear() === currentYear;
+            const totalPaidThisMonth = this.bills
+                .filter(bill => {
+                    if (!bill || bill.status !== 'paid' || !bill.paidAt) return false;
+                    const paidDate = new Date(bill.paidAt);
+                    return paidDate.getMonth() === now.getMonth() && 
+                           paidDate.getFullYear() === now.getFullYear();
                 })
-                .reduce((sum, revenue) => sum + (revenue.amount || 0), 0);
+                .reduce((sum, bill) => sum + (bill.amount || 0), 0);
 
-            const processedDocs = this.bills.length + this.invoices.length + this.revenues.length;
+            const totalDocuments = this.bills.length + this.invoices.length + this.revenues.length;
 
-            // Update dashboard cards
-            const cards = document.querySelectorAll('.dashboard-card');
-            if (cards.length >= 4) {
-                // Upcoming bills card
-                const upcomingCard = cards[0];
-                const upcomingValue = upcomingCard.querySelector('.metric-value');
-                const upcomingIcon = upcomingCard.querySelector('.card-header i');
-                if (upcomingValue) {
-                    const totalUpcoming = upcomingBills.length + overdueBills.length;
-                    upcomingValue.textContent = totalUpcoming;
-                    if (upcomingIcon) {
-                        upcomingIcon.className = overdueBills.length > 0 ? 'fas fa-exclamation-triangle text-danger' : 
-                                                totalUpcoming > 0 ? 'fas fa-exclamation-triangle text-warning' : 
-                                                'fas fa-check-circle text-success';
-                    }
-                }
-
-                // Total open card
-                const totalCard = cards[1];
-                const totalValue = totalCard.querySelector('.metric-value');
-                if (totalValue) {
-                    totalValue.textContent = `R$ ${totalOpen.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
-                }
-
-                // Monthly revenues card (changed from paid bills)
-                const revenueCard = cards[2];
-                const revenueCardHeader = revenueCard.querySelector('.card-header h3');
-                const revenueValue = revenueCard.querySelector('.metric-value');
-                const revenueLabel = revenueCard.querySelector('.metric-label');
-                const revenueIcon = revenueCard.querySelector('.card-header i');
-                
-                if (revenueCardHeader) revenueCardHeader.textContent = 'Receitas este Mês';
-                if (revenueValue) {
-                    revenueValue.textContent = `R$ ${revenuesThisMonth.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
-                }
-                if (revenueLabel) revenueLabel.textContent = 'Recebido';
-                if (revenueIcon) revenueIcon.className = 'fas fa-coins text-success';
-
-                // Processed documents card
-                const docsCard = cards[3];
-                const docsValue = docsCard.querySelector('.metric-value');
-                if (docsValue) {
-                    docsValue.textContent = processedDocs;
-                }
-            }
-
-            // Update notification count
-            const notificationCountEl = document.querySelector('.notification-count');
-            if (notificationCountEl) {
-                const totalNotifications = upcomingBills.length + overdueBills.length;
-                notificationCountEl.textContent = totalNotifications;
-                notificationCountEl.style.display = totalNotifications > 0 ? 'inline' : 'none';
-            }
+            // Update metric values
+            this.updateMetricCard(0, upcomingBills.length, 'Boletos');
+            this.updateMetricCard(1, `R$ ${totalPending.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, 'A pagar');
+            this.updateMetricCard(2, `R$ ${totalPaidThisMonth.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, 'Concluído');
+            this.updateMetricCard(3, totalDocuments, 'IA Analytics');
         } catch (error) {
             console.error('Erro ao atualizar métricas:', error);
         }
     }
 
+    updateMetricCard(index, value, label) {
+        try {
+            const cards = document.querySelectorAll('.dashboard-card .metric-value');
+            const labels = document.querySelectorAll('.dashboard-card .metric-label');
+            
+            if (cards[index]) {
+                cards[index].textContent = value;
+            }
+            if (labels[index]) {
+                labels[index].textContent = label;
+            }
+        } catch (error) {
+            console.error('Erro ao atualizar card de métrica:', error);
+        }
+    }
+
     renderCashflowChart() {
         try {
-            const chartElement = document.getElementById('cashflowChart');
-            if (!chartElement) {
-                console.warn('Elemento cashflowChart não encontrado');
-                return;
-            }
+            const canvas = document.getElementById('cashflowChart');
+            if (!canvas) return;
 
-            const ctx = chartElement.getContext('2d');
+            const ctx = canvas.getContext('2d');
             
-            // Generate data for the last 6 months based on actual data
-            const months = [];
-            const income = [];
-            const expenses = [];
-            
-            for (let i = 5; i >= 0; i--) {
-                const date = new Date();
-                date.setMonth(date.getMonth() - i);
-                const month = date.getMonth();
-                const year = date.getFullYear();
-                
-                months.push(date.toLocaleDateString('pt-BR', { month: 'short' }));
-                
-                // Calculate actual revenues for this month
-                const monthRevenues = this.revenues
-                    .filter(revenue => {
-                        if (!revenue || !revenue.date) return false;
-                        const revenueDate = new Date(revenue.date);
-                        if (isNaN(revenueDate.getTime())) return false;
-                        return revenueDate.getMonth() === month && revenueDate.getFullYear() === year;
-                    })
-                    .reduce((sum, revenue) => sum + (revenue.amount || 0), 0);
-                
-                // Calculate actual expenses (paid bills + invoices) for this month
-                const monthBillExpenses = this.bills
-                    .filter(bill => {
-                        if (!bill || !bill.dueDate) return false;
-                        // For bills, use due date if paid or creation date
-                        const billDate = bill.status === 'paid' && bill.paidAt ? 
-                            new Date(bill.paidAt) : new Date(bill.dueDate);
-                        if (isNaN(billDate.getTime())) return false;
-                        return billDate.getMonth() === month && billDate.getFullYear() === year && 
-                               (bill.status === 'paid' || bill.status === 'pending');
-                    })
-                    .reduce((sum, bill) => sum + (bill.amount || 0), 0);
-
-                const monthInvoiceExpenses = this.invoices
-                    .filter(invoice => {
-                        if (!invoice || !invoice.date) return false;
-                        const invoiceDate = new Date(invoice.date);
-                        if (isNaN(invoiceDate.getTime())) return false;
-                        return invoiceDate.getMonth() === month && invoiceDate.getFullYear() === year;
-                    })
-                    .reduce((sum, invoice) => sum + (invoice.amount || 0), 0);
-                
-                income.push(monthRevenues);
-                expenses.push(monthBillExpenses + monthInvoiceExpenses);
-            }
-
             // Destroy existing chart if it exists
-            if (this.cashflowChart) {
-                this.cashflowChart.destroy();
+            if (window.cashflowChart instanceof Chart) {
+                window.cashflowChart.destroy();
             }
 
-            this.cashflowChart = new Chart(ctx, {
+            // Prepare data for last 6 months
+            const monthsData = this.getCashflowData();
+
+            window.cashflowChart = new Chart(ctx, {
                 type: 'line',
                 data: {
-                    labels: months,
-                    datasets: [{
-                        label: 'Receitas',
-                        data: income,
-                        borderColor: 'rgb(16, 185, 129)',
-                        backgroundColor: 'rgba(16, 185, 129, 0.1)',
-                        tension: 0.4,
-                        fill: true
-                    }, {
-                        label: 'Despesas',
-                        data: expenses,
-                        borderColor: 'rgb(239, 68, 68)',
-                        backgroundColor: 'rgba(239, 68, 68, 0.1)',
-                        tension: 0.4,
-                        fill: true
-                    }]
+                    labels: monthsData.labels,
+                    datasets: [
+                        {
+                            label: 'Receitas',
+                            data: monthsData.revenues,
+                            borderColor: '#10b981',
+                            backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                            tension: 0.4
+                        },
+                        {
+                            label: 'Despesas',
+                            data: monthsData.expenses,
+                            borderColor: '#ef4444',
+                            backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                            tension: 0.4
+                        },
+                        {
+                            label: 'Saldo',
+                            data: monthsData.balance,
+                            borderColor: '#2563eb',
+                            backgroundColor: 'rgba(37, 99, 235, 0.1)',
+                            tension: 0.4
+                        }
+                    ]
                 },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
-                    interaction: {
-                        mode: 'index',
-                        intersect: false,
-                    },
                     scales: {
                         y: {
                             beginAtZero: true,
@@ -561,20 +1718,11 @@ class FinanceAI {
                         }
                     },
                     plugins: {
-                        legend: {
-                            position: 'top',
-                        },
                         tooltip: {
-                            mode: 'index',
-                            intersect: false,
                             callbacks: {
                                 label: function(context) {
-                                    let label = context.dataset.label || '';
-                                    if (label) {
-                                        label += ': ';
-                                    }
-                                    label += 'R$ ' + context.parsed.y.toLocaleString('pt-BR', { minimumFractionDigits: 2 });
-                                    return label;
+                                    return context.dataset.label + ': R$ ' + 
+                                           context.parsed.y.toLocaleString('pt-BR', { minimumFractionDigits: 2 });
                                 }
                             }
                         }
@@ -582,55 +1730,179 @@ class FinanceAI {
                 }
             });
         } catch (error) {
-            console.error('Erro ao renderizar gráfico:', error);
+            console.error('Erro ao renderizar gráfico de fluxo de caixa:', error);
+        }
+    }
+
+    getCashflowData() {
+        try {
+            const months = [];
+            const revenues = [];
+            const expenses = [];
+            const balance = [];
+
+            // Get last 6 months
+            for (let i = 5; i >= 0; i--) {
+                const date = new Date();
+                date.setMonth(date.getMonth() - i);
+                
+                const monthKey = date.toLocaleString('pt-BR', { month: 'short', year: 'numeric' });
+                months.push(monthKey);
+
+                // Calculate revenues for this month
+                const monthRevenues = this.revenues.filter(revenue => {
+                    if (!revenue || !revenue.date) return false;
+                    const revenueDate = new Date(revenue.date);
+                    return revenueDate.getMonth() === date.getMonth() && 
+                           revenueDate.getFullYear() === date.getFullYear();
+                }).reduce((sum, revenue) => sum + (revenue.amount || 0), 0);
+
+                // Calculate expenses (bills + invoices) for this month
+                const monthBills = this.bills.filter(bill => {
+                    if (!bill || !bill.dueDate) return false;
+                    const billDate = new Date(bill.dueDate);
+                    return billDate.getMonth() === date.getMonth() && 
+                           billDate.getFullYear() === date.getFullYear();
+                }).reduce((sum, bill) => sum + (bill.amount || 0), 0);
+
+                const monthInvoices = this.invoices.filter(invoice => {
+                    if (!invoice || !invoice.date) return false;
+                    const invoiceDate = new Date(invoice.date);
+                    return invoiceDate.getMonth() === date.getMonth() && 
+                           invoiceDate.getFullYear() === date.getFullYear();
+                }).reduce((sum, invoice) => sum + (invoice.amount || 0), 0);
+
+                const monthExpenses = monthBills + monthInvoices;
+                const monthBalance = monthRevenues - monthExpenses;
+
+                revenues.push(monthRevenues);
+                expenses.push(monthExpenses);
+                balance.push(monthBalance);
+            }
+
+            return {
+                labels: months,
+                revenues: revenues,
+                expenses: expenses,
+                balance: balance
+            };
+        } catch (error) {
+            console.error('Erro ao calcular dados de fluxo de caixa:', error);
+            return {
+                labels: [],
+                revenues: [],
+                expenses: [],
+                balance: []
+            };
         }
     }
 
     renderRecentActivities() {
         try {
-            const activities = [
-                {
-                    type: 'bill',
-                    title: 'Boleto adicionado',
-                    description: 'Energia Elétrica - R$ 450,30',
-                    time: '2 horas atrás',
-                    icon: 'fas fa-file-invoice-dollar',
-                    color: 'var(--primary-color)'
-                },
-                {
-                    type: 'payment',
-                    title: 'Pagamento realizado',
-                    description: 'Internet - R$ 89,90',
-                    time: '1 dia atrás',
-                    icon: 'fas fa-check-circle',
-                    color: 'var(--success-color)'
-                },
-                {
-                    type: 'reminder',
-                    title: 'Lembrete enviado',
-                    description: 'Aluguel vence em 2 dias',
-                    time: '2 dias atrás',
-                    icon: 'fas fa-bell',
-                    color: 'var(--warning-color)'
-                }
-            ];
-
             const activityList = document.getElementById('activityList');
-            if (activityList) {
-                activityList.innerHTML = activities.map(activity => `
-                    <div class="activity-item">
-                        <div class="activity-icon" style="background-color: ${activity.color}">
-                            <i class="${activity.icon}"></i>
-                        </div>
-                        <div class="activity-content">
-                            <div class="activity-title">${activity.title}</div>
-                            <div class="activity-time">${activity.time}</div>
-                        </div>
+            if (!activityList) return;
+
+            // Combine all activities
+            const activities = [];
+
+            // Add bills
+            this.bills.forEach(bill => {
+                if (bill && bill.createdAt) {
+                    activities.push({
+                        type: 'bill',
+                        title: `Boleto adicionado: ${bill.name}`,
+                        time: bill.createdAt,
+                        icon: 'file-invoice-dollar',
+                        color: '#f59e0b'
+                    });
+                }
+                if (bill && bill.paidAt) {
+                    activities.push({
+                        type: 'payment',
+                        title: `Boleto pago: ${bill.name}`,
+                        time: bill.paidAt,
+                        icon: 'check-circle',
+                        color: '#10b981'
+                    });
+                }
+            });
+
+            // Add invoices
+            this.invoices.forEach(invoice => {
+                if (invoice && invoice.createdAt) {
+                    activities.push({
+                        type: 'invoice',
+                        title: `Nota fiscal: ${invoice.number}`,
+                        time: invoice.createdAt,
+                        icon: 'receipt',
+                        color: '#2563eb'
+                    });
+                }
+            });
+
+            // Add revenues
+            this.revenues.forEach(revenue => {
+                if (revenue && revenue.createdAt) {
+                    activities.push({
+                        type: 'revenue',
+                        title: `Receita: ${revenue.description}`,
+                        time: revenue.createdAt,
+                        icon: 'coins',
+                        color: '#10b981'
+                    });
+                }
+            });
+
+            // Sort by time (most recent first) and take last 10
+            activities.sort((a, b) => new Date(b.time) - new Date(a.time));
+            const recentActivities = activities.slice(0, 10);
+
+            if (recentActivities.length === 0) {
+                activityList.innerHTML = `
+                    <div style="text-align: center; color: var(--text-secondary); padding: 2rem;">
+                        <i class="fas fa-history" style="font-size: 2rem; margin-bottom: 1rem; opacity: 0.5;"></i>
+                        <p>Nenhuma atividade recente</p>
                     </div>
-                `).join('');
+                `;
+                return;
+            }
+
+            activityList.innerHTML = recentActivities.map(activity => `
+                <div class="activity-item">
+                    <div class="activity-icon" style="background-color: ${activity.color};">
+                        <i class="fas fa-${activity.icon}"></i>
+                    </div>
+                    <div class="activity-content">
+                        <div class="activity-title">${this.escapeHtml(activity.title)}</div>
+                        <div class="activity-time">${this.formatRelativeTime(activity.time)}</div>
+                    </div>
+                </div>
+            `).join('');
+        } catch (error) {
+            console.error('Erro ao renderizar atividades recentes:', error);
+        }
+    }
+
+    formatRelativeTime(dateString) {
+        try {
+            const date = new Date(dateString);
+            const now = new Date();
+            const diffMs = now - date;
+            const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+            const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+            const diffMinutes = Math.floor(diffMs / (1000 * 60));
+
+            if (diffDays > 0) {
+                return `${diffDays} dia${diffDays > 1 ? 's' : ''} atrás`;
+            } else if (diffHours > 0) {
+                return `${diffHours} hora${diffHours > 1 ? 's' : ''} atrás`;
+            } else if (diffMinutes > 0) {
+                return `${diffMinutes} minuto${diffMinutes > 1 ? 's' : ''} atrás`;
+            } else {
+                return 'Agora mesmo';
             }
         } catch (error) {
-            console.error('Erro ao renderizar atividades:', error);
+            return 'Data inválida';
         }
     }
 
@@ -643,22 +1915,54 @@ class FinanceAI {
             }
 
             if (!Array.isArray(this.bills) || this.bills.length === 0) {
-                billsList.innerHTML = '<p>Nenhum boleto encontrado.</p>';
+                billsList.innerHTML = `
+                    <div class="empty-state">
+                        <i class="fas fa-receipt"></i>
+                        <p>Nenhum boleto encontrado.</p>
+                        <small style="margin-top: 0.5rem; display: block; opacity: 0.7;">
+                            Use o botão "Adicionar Boleto" para começar
+                        </small>
+                    </div>
+                `;
                 return;
             }
 
-            billsList.innerHTML = this.bills.map(bill => {
+            // Filter bills based on settings with improved logic
+            let filteredBills = [...this.bills];
+            if (!this.settings.showPaidBills) {
+                filteredBills = filteredBills.filter(bill => bill.status !== 'paid');
+            }
+
+            // Enhanced sorting: overdue first, then by due date
+            filteredBills.sort((a, b) => {
+                const isOverdueA = this.isBillOverdue(a);
+                const isOverdueB = this.isBillOverdue(b);
+                
+                if (isOverdueA && !isOverdueB) return -1;
+                if (!isOverdueA && isOverdueB) return 1;
+                
+                const dateA = new Date(a.dueDate);
+                const dateB = new Date(b.dueDate);
+                return dateA - dateB;
+            });
+
+            billsList.innerHTML = filteredBills.map(bill => {
                 if (!this.validateBillData(bill)) return '';
                 
+                const isOverdue = this.isBillOverdue(bill);
+                const daysUntilDue = this.getDaysUntilDue(bill.dueDate);
+                const isPaid = bill.status === 'paid';
+                
                 return `
-                    <div class="bill-item">
+                    <div class="bill-item ${this.settings.compactView ? 'compact' : ''} ${isOverdue ? 'overdue' : ''} ${isPaid ? 'paid' : ''}" 
+                         data-bill-id="${bill.id}">
                         <div class="item-header">
                             <h3 class="item-title">${this.escapeHtml(bill.name)}</h3>
                             <div class="item-status-container">
                                 <span class="item-status status-${bill.status}">
                                     ${this.getStatusText(bill.status)}
                                 </span>
-                                ${bill.status === 'paid' ? `
+                                ${isPaid ? `
                                     <div class="dropdown-menu">
                                         <button class="dropdown-toggle" onclick="financeAI.toggleDropdown(event, '${bill.id}')">
                                             <i class="fas fa-ellipsis-v"></i>
@@ -675,22 +1979,45 @@ class FinanceAI {
                                 ` : ''}
                             </div>
                         </div>
-                        <div class="item-details">
-                            <div class="detail-item">
-                                <span class="detail-label">Valor</span>
-                                <span class="detail-value">R$ ${bill.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                        ${!this.settings.compactView ? `
+                            <div class="item-details">
+                                <div class="detail-item">
+                                    <span class="detail-label">Valor</span>
+                                    <span class="detail-value amount">R$ ${bill.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                                </div>
+                                <div class="detail-item">
+                                    <span class="detail-label">Vencimento</span>
+                                    <span class="detail-value ${isOverdue ? 'text-danger' : ''}">${this.formatDate(bill.dueDate)}</span>
+                                </div>
+                                <div class="detail-item">
+                                    <span class="detail-label">Categoria</span>
+                                    <span class="detail-value">${this.getCategoryText(bill.category)}</span>
+                                </div>
+                                ${daysUntilDue !== null && !isPaid ? `
+                                    <div class="detail-item">
+                                        <span class="detail-label">Status</span>
+                                        <span class="detail-value ${daysUntilDue < 0 ? 'text-danger' : daysUntilDue <= 3 ? 'text-warning' : 'text-success'}">
+                                            ${daysUntilDue < 0 ? `Vencido há ${Math.abs(daysUntilDue)} dias` : 
+                                              daysUntilDue === 0 ? 'Vence hoje' : 
+                                              `Vence em ${daysUntilDue} dias`}
+                                        </span>
+                                    </div>
+                                ` : ''}
+                                ${isPaid && bill.paidAt ? `
+                                    <div class="detail-item">
+                                        <span class="detail-label">Pago em</span>
+                                        <span class="detail-value text-success">${this.formatDate(bill.paidAt)}</span>
+                                    </div>
+                                ` : ''}
                             </div>
-                            <div class="detail-item">
-                                <span class="detail-label">Vencimento</span>
-                                <span class="detail-value">${this.formatDate(bill.dueDate)}</span>
+                        ` : `
+                            <div class="compact-details">
+                                <span class="compact-amount">R$ ${bill.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                                <span class="compact-date ${isOverdue ? 'text-danger' : ''}">${this.formatDate(bill.dueDate)}</span>
                             </div>
-                            <div class="detail-item">
-                                <span class="detail-label">Categoria</span>
-                                <span class="detail-value">${this.getCategoryText(bill.category)}</span>
-                            </div>
-                        </div>
+                        `}
                         <div class="item-actions">
-                            ${bill.status === 'pending' ? `
+                            ${!isPaid ? `
                                 <button class="btn-sm btn-success" onclick="financeAI.markBillAsPaid('${bill.id}')">
                                     <i class="fas fa-check"></i> Marcar Pago
                                 </button>
@@ -700,767 +2027,197 @@ class FinanceAI {
                                 <button class="btn-sm btn-danger" onclick="financeAI.deleteBill('${bill.id}')">
                                     <i class="fas fa-trash"></i> Excluir
                                 </button>
-                            ` : bill.status === 'overdue' ? `
-                                <button class="btn-sm btn-success" onclick="financeAI.markBillAsPaid('${bill.id}')">
-                                    <i class="fas fa-check"></i> Marcar Pago
-                                </button>
-                                <button class="btn-sm btn-warning" onclick="financeAI.editBill('${bill.id}')">
-                                    <i class="fas fa-edit"></i> Editar
-                                </button>
-                                <button class="btn-sm btn-danger" onclick="financeAI.deleteBill('${bill.id}')">
-                                    <i class="fas fa-trash"></i> Excluir
-                                </button>
-                            ` : ''}
+                            ` : `
+                                <span class="text-success" style="font-size: 0.875rem; font-weight: 500;">
+                                    <i class="fas fa-check-circle"></i> Boleto pago
+                                </span>
+                            `}
                         </div>
                     </div>
                 `;
             }).filter(html => html).join('');
+
+            // Add filter controls with improved UI
+            this.addBillFilters();
+            
+            // Add summary info
+            this.addBillsSummary(filteredBills);
         } catch (error) {
             console.error('Erro ao renderizar boletos:', error);
             const billsList = document.getElementById('billsList');
             if (billsList) {
-                billsList.innerHTML = '<p>Erro ao carregar boletos.</p>';
-            }
-        }
-    }
-
-    renderInvoices() {
-        try {
-            const invoicesList = document.getElementById('invoicesList');
-            if (!invoicesList) {
-                console.warn('Elemento invoicesList não encontrado');
-                return;
-            }
-
-            if (!Array.isArray(this.invoices) || this.invoices.length === 0) {
-                invoicesList.innerHTML = '<p>Nenhuma nota fiscal encontrada.</p>';
-                return;
-            }
-
-            invoicesList.innerHTML = this.invoices.map(invoice => {
-                if (!this.validateInvoiceData(invoice)) return '';
-                
-                return `
-                    <div class="invoice-item">
-                        <div class="item-header">
-                            <h3 class="item-title">${this.escapeHtml(invoice.number)} - ${this.escapeHtml(invoice.supplier)}</h3>
-                            <span class="item-status status-${invoice.status}">
-                                ${this.getStatusText(invoice.status)}
-                            </span>
-                        </div>
-                        <div class="item-details">
-                            <div class="detail-item">
-                                <span class="detail-label">Valor</span>
-                                <span class="detail-value">R$ ${invoice.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
-                            </div>
-                            <div class="detail-item">
-                                <span class="detail-label">Data</span>
-                                <span class="detail-value">${this.formatDate(invoice.date)}</span>
-                            </div>
-                            <div class="detail-item">
-                                <span class="detail-label">Categoria</span>
-                                <span class="detail-value">${this.getCategoryText(invoice.category)}</span>
-                            </div>
-                        </div>
-                        <div class="item-actions">
-                            <button class="btn-sm btn-info" onclick="financeAI.toggleInvoiceStatus('${invoice.id}')">
-                                <i class="fas fa-sync"></i> ${invoice.status === 'pending' ? 'Marcar Recebido' : 'Marcar Pendente'}
-                            </button>
-                            <button class="btn-sm btn-warning" onclick="financeAI.editInvoice('${invoice.id}')">
-                                <i class="fas fa-edit"></i> Editar
-                            </button>
-                            <button class="btn-sm btn-danger" onclick="financeAI.deleteInvoice('${invoice.id}')">
-                                <i class="fas fa-trash"></i> Excluir
-                            </button>
-                        </div>
+                billsList.innerHTML = `
+                    <div class="error-state">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        <p>Erro ao carregar boletos.</p>
+                        <button class="btn btn-primary" onclick="financeAI.renderBills()" style="margin-top: 1rem;">
+                            <i class="fas fa-refresh"></i> Tentar Novamente
+                        </button>
                     </div>
                 `;
-            }).filter(html => html).join('');
-        } catch (error) {
-            console.error('Erro ao renderizar notas fiscais:', error);
-            const invoicesList = document.getElementById('invoicesList');
-            if (invoicesList) {
-                invoicesList.innerHTML = '<p>Erro ao carregar notas fiscais.</p>';
             }
         }
     }
 
-    renderRevenues() {
+    addBillsSummary(bills) {
         try {
-            const revenuesList = document.getElementById('revenuesList');
-            if (!revenuesList) {
-                console.warn('Elemento revenuesList não encontrado');
-                return;
+            const billsSection = document.getElementById('bills-section');
+            if (!billsSection) return;
+
+            // Remove existing summary
+            const existingSummary = billsSection.querySelector('.bills-summary');
+            if (existingSummary) {
+                existingSummary.remove();
             }
 
-            if (!Array.isArray(this.revenues) || this.revenues.length === 0) {
-                revenuesList.innerHTML = '<p>Nenhuma receita encontrada.</p>';
-                return;
-            }
+            const pendingBills = bills.filter(bill => bill.status === 'pending');
+            const overdueBills = bills.filter(bill => this.isBillOverdue(bill));
+            const paidBills = bills.filter(bill => bill.status === 'paid');
+            
+            const totalPending = pendingBills.reduce((sum, bill) => sum + bill.amount, 0);
+            const totalOverdue = overdueBills.reduce((sum, bill) => sum + bill.amount, 0);
+            const totalPaid = paidBills.reduce((sum, bill) => sum + bill.amount, 0);
 
-            revenuesList.innerHTML = this.revenues.map(revenue => {
-                if (!this.validateRevenueData(revenue)) return '';
-                
-                return `
-                    <div class="revenue-item">
-                        <div class="item-header">
-                            <h3 class="item-title">${this.escapeHtml(revenue.description)}</h3>
-                            <span class="item-amount revenue-amount">
-                                R$ ${revenue.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                            </span>
-                        </div>
-                        <div class="item-details">
-                            <div class="detail-item">
-                                <span class="detail-label">Data</span>
-                                <span class="detail-value">${this.formatDate(revenue.date)}</span>
-                            </div>
-                            <div class="detail-item">
-                                <span class="detail-label">Categoria</span>
-                                <span class="detail-value">${this.getRevenueCategoryText(revenue.category)}</span>
-                            </div>
-                            <div class="detail-item">
-                                <span class="detail-label">Fonte</span>
-                                <span class="detail-value">${this.escapeHtml(revenue.source || 'Não informado')}</span>
-                            </div>
-                        </div>
-                        ${revenue.notes ? `
-                            <div class="revenue-notes">
-                                <span class="detail-label">Observações:</span>
-                                <p>${this.escapeHtml(revenue.notes)}</p>
-                            </div>
-                        ` : ''}
-                        <div class="item-actions">
-                            <button class="btn-sm btn-warning" onclick="financeAI.editRevenue('${revenue.id}')">
-                                <i class="fas fa-edit"></i> Editar
-                            </button>
-                            <button class="btn-sm btn-danger" onclick="financeAI.deleteRevenue('${revenue.id}')">
-                                <i class="fas fa-trash"></i> Excluir
-                            </button>
-                        </div>
-                    </div>
-                `;
-            }).filter(html => html).join('');
-        } catch (error) {
-            console.error('Erro ao renderizar receitas:', error);
-            const revenuesList = document.getElementById('revenuesList');
-            if (revenuesList) {
-                revenuesList.innerHTML = '<p>Erro ao carregar receitas.</p>';
-            }
-        }
-    }
-
-    getRevenueCategoryText(category) {
-        const categoryMap = {
-            'sales': 'Vendas',
-            'services': 'Prestação de Serviços',
-            'investments': 'Investimentos',
-            'rental': 'Aluguel',
-            'freelance': 'Freelance',
-            'other': 'Outros'
-        };
-        return categoryMap[category] || category;
-    }
-
-    renderNotifications() {
-        this.generateNotifications();
-        const notificationsList = document.getElementById('notificationsList');
-        notificationsList.innerHTML = this.notifications.map(notification => `
-            <div class="notification-item ${notification.type}">
-                <div class="notification-header">
-                    <h3 class="notification-title">${notification.title}</h3>
-                    <span class="notification-time">${notification.time}</span>
+            const summaryDiv = document.createElement('div');
+            summaryDiv.className = 'bills-summary financial-summary';
+            summaryDiv.innerHTML = `
+                <div class="summary-card neutral">
+                    <div class="summary-value">${bills.length}</div>
+                    <div class="summary-label">Total de Boletos</div>
                 </div>
-                <p class="notification-message">${notification.message}</p>
-            </div>
-        `).join('');
+                <div class="summary-card ${totalPending > 0 ? 'negative' : 'neutral'}">
+                    <div class="summary-value">R$ ${totalPending.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</div>
+                    <div class="summary-label">Pendentes (${pendingBills.length})</div>
+                </div>
+                <div class="summary-card ${totalOverdue > 0 ? 'negative' : 'neutral'}">
+                    <div class="summary-value">R$ ${totalOverdue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</div>
+                    <div class="summary-label">Vencidos (${overdueBills.length})</div>
+                </div>
+                <div class="summary-card ${totalPaid > 0 ? 'positive' : 'neutral'}">
+                    <div class="summary-value">R$ ${totalPaid.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</div>
+                    <div class="summary-label">Pagos (${paidBills.length})</div>
+                </div>
+            `;
+
+            const billsList = document.getElementById('billsList');
+            if (billsList) {
+                billsList.insertAdjacentElement('beforebegin', summaryDiv);
+            }
+        } catch (error) {
+            console.error('Erro ao adicionar resumo dos boletos:', error);
+        }
     }
 
-    generateNotifications() {
-        const now = new Date();
-        this.notifications = [];
+    async exportFinancialData() {
+        try {
+            this.showLoadingOverlay('Exportando dados...');
+            
+            const exportData = await this.storageManager.exportData();
+            const blob = new Blob([JSON.stringify(exportData, null, 2)], { 
+                type: 'application/json' 
+            });
+            
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `financeai-export-${new Date().toISOString().split('T')[0]}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            
+            this.hideLoadingOverlay();
+            this.showToast('Dados exportados com sucesso!', 'success');
+        } catch (error) {
+            this.hideLoadingOverlay();
+            console.error('Erro ao exportar dados:', error);
+            this.showToast('Erro ao exportar dados: ' + error.message, 'error');
+        }
+    }
 
-        // Check for upcoming bills
-        this.bills.forEach(bill => {
-            if (bill.status === 'pending') {
-                const dueDate = new Date(bill.dueDate);
-                const daysDiff = Math.ceil((dueDate - now) / (1000 * 60 * 60 * 24));
+    async importFinancialData() {
+        try {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.json';
+            
+            input.onchange = async (event) => {
+                const file = event.target.files[0];
+                if (!file) return;
                 
-                if (daysDiff <= this.settings.reminderDays && daysDiff > 0) {
-                    this.notifications.push({
-                        type: 'warning',
-                        title: 'Vencimento Próximo',
-                        message: `${bill.name} vence em ${daysDiff} dias (R$ ${bill.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })})`,
-                        time: 'Agora'
-                    });
-                } else if (daysDiff <= 0) {
-                    this.notifications.push({
-                        type: 'danger',
-                        title: 'Boleto Vencido',
-                        message: `${bill.name} venceu há ${Math.abs(daysDiff)} dias (R$ ${bill.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })})`,
-                        time: 'Agora'
-                    });
-                }
-            }
-        });
-
-        // Add system notifications
-        this.notifications.push({
-            type: 'success',
-            title: 'Sistema Atualizado',
-            message: 'FinanceAI foi atualizado com novas funcionalidades de IA',
-            time: '1 hora atrás'
-        });
-    }
-
-    async markBillAsPaid(billId) {
-        try {
-            const bill = this.bills.find(b => b.id == billId);
-            if (!bill) {
-                throw new Error('Boleto não encontrado');
-            }
-
-            bill.status = 'paid';
-            bill.paidAt = new Date().toISOString();
-            
-            await this.saveData();
-            this.renderBills();
-            this.updateDashboardMetrics();
-            this.renderCashflowChart(); // Update chart when bill status changes
-            
-            this.showToast('Boleto marcado como pago!', 'success');
-            
-            // Send WhatsApp confirmation if enabled
-            if (this.settings.whatsappEnabled && this.settings.whatsappNumber) {
-                this.whatsappIntegration.sendPaymentConfirmation(bill, this.settings.whatsappNumber)
-                    .catch(error => console.error('Erro ao enviar confirmação WhatsApp:', error));
-            }
-        } catch (error) {
-            console.error('Erro ao marcar boleto como pago:', error);
-            this.showToast(error.message || 'Erro ao marcar boleto como pago', 'error');
-        }
-    }
-
-    async deleteBill(billId) {
-        try {
-            if (!confirm('Tem certeza que deseja excluir este boleto?')) {
-                return;
-            }
-
-            const billIndex = this.bills.findIndex(b => b.id == billId);
-            if (billIndex === -1) {
-                throw new Error('Boleto não encontrado');
-            }
-
-            this.bills.splice(billIndex, 1);
-            await this.saveData();
-            this.renderBills();
-            this.updateDashboardMetrics();
-            this.renderCashflowChart(); // Update chart when bill is deleted
-            
-            this.showToast('Boleto excluído com sucesso!', 'success');
-        } catch (error) {
-            console.error('Erro ao excluir boleto:', error);
-            this.showToast(error.message || 'Erro ao excluir boleto', 'error');
-        }
-    }
-
-    editBill(billId) {
-        try {
-            const bill = this.bills.find(b => b.id == billId);
-            if (!bill) {
-                throw new Error('Boleto não encontrado');
-            }
-
-            // Populate form with bill data
-            document.getElementById('billName').value = bill.name || '';
-            document.getElementById('billAmount').value = bill.amount || '';
-            document.getElementById('billDueDate').value = bill.dueDate || '';
-            document.getElementById('billCategory').value = bill.category || 'other';
-            const barcodeField = document.getElementById('billBarcode');
-            if (barcodeField) {
-                barcodeField.value = bill.barcode || '';
-            }
-
-            // Store the ID for updating
-            this.editingBillId = billId;
-            
-            // Change form title and button text
-            const modalTitle = document.querySelector('#addBillModal .modal-header h3');
-            const submitButton = document.querySelector('#addBillForm button[type="submit"]');
-            
-            if (modalTitle) modalTitle.textContent = 'Editar Boleto';
-            if (submitButton) submitButton.textContent = 'Atualizar';
-
-            openAddBillModal();
-        } catch (error) {
-            console.error('Erro ao editar boleto:', error);
-            this.showToast(error.message || 'Erro ao editar boleto', 'error');
-        }
-    }
-
-    async deleteInvoice(invoiceId) {
-        try {
-            if (!confirm('Tem certeza que deseja excluir esta nota fiscal?')) {
-                return;
-            }
-
-            const invoiceIndex = this.invoices.findIndex(i => i.id == invoiceId);
-            if (invoiceIndex === -1) {
-                throw new Error('Nota fiscal não encontrada');
-            }
-
-            this.invoices.splice(invoiceIndex, 1);
-            await this.saveData();
-            this.renderInvoices();
-            this.renderCashflowChart(); // Update chart when invoice is deleted
-            
-            this.showToast('Nota fiscal excluída com sucesso!', 'success');
-        } catch (error) {
-            console.error('Erro ao excluir nota fiscal:', error);
-            this.showToast(error.message || 'Erro ao excluir nota fiscal', 'error');
-        }
-    }
-
-    editInvoice(invoiceId) {
-        try {
-            const invoice = this.invoices.find(i => i.id == invoiceId);
-            if (!invoice) {
-                throw new Error('Nota fiscal não encontrada');
-            }
-
-            // Populate form with invoice data
-            document.getElementById('invoiceNumber').value = invoice.number || '';
-            document.getElementById('invoiceSupplier').value = invoice.supplier || '';
-            document.getElementById('invoiceAmount').value = invoice.amount || '';
-            document.getElementById('invoiceDate').value = invoice.date || '';
-            document.getElementById('invoiceCategory').value = invoice.category || 'other';
-            document.getElementById('invoiceStatus').value = invoice.status || 'received';
-
-            // Store the ID for updating
-            this.editingInvoiceId = invoiceId;
-            
-            // Change form title and button text
-            const modalTitle = document.querySelector('#addInvoiceModal .modal-header h3');
-            const submitButton = document.querySelector('#addInvoiceForm button[type="submit"]');
-            
-            if (modalTitle) modalTitle.textContent = 'Editar Nota Fiscal';
-            if (submitButton) submitButton.textContent = 'Atualizar';
-
-            openAddInvoiceModal();
-        } catch (error) {
-            console.error('Erro ao editar nota fiscal:', error);
-            this.showToast(error.message || 'Erro ao editar nota fiscal', 'error');
-        }
-    }
-
-    toggleDropdown(event, billId) {
-        event.stopPropagation();
-        
-        // Close all other dropdowns
-        document.querySelectorAll('.dropdown-content').forEach(dropdown => {
-            if (dropdown.id !== `dropdown-${billId}`) {
-                dropdown.classList.remove('show');
-            }
-        });
-        
-        // Toggle current dropdown
-        const dropdown = document.getElementById(`dropdown-${billId}`);
-        if (dropdown) {
-            dropdown.classList.toggle('show');
-        }
-    }
-
-    async toggleInvoiceStatus(invoiceId) {
-        try {
-            const invoice = this.invoices.find(i => i.id == invoiceId);
-            if (!invoice) {
-                throw new Error('Nota fiscal não encontrada');
-            }
-
-            invoice.status = invoice.status === 'pending' ? 'received' : 'pending';
-            invoice.updatedAt = new Date().toISOString();
-            
-            await this.saveData();
-            this.renderInvoices();
-            
-            this.showToast(`Status da nota fiscal atualizado para ${this.getStatusText(invoice.status)}!`, 'success');
-        } catch (error) {
-            console.error('Erro ao alterar status da nota fiscal:', error);
-            this.showToast(error.message || 'Erro ao alterar status da nota fiscal', 'error');
-        }
-    }
-
-    async addBill() {
-        try {
-            const form = document.getElementById('addBillForm');
-            if (!form) {
-                throw new Error('Formulário não encontrado');
-            }
-
-            const formData = new FormData(form);
-            const billData = {
-                name: formData.get('billName') || document.getElementById('billName')?.value,
-                amount: parseFloat(formData.get('billAmount') || document.getElementById('billAmount')?.value),
-                dueDate: formData.get('billDueDate') || document.getElementById('billDueDate')?.value,
-                category: formData.get('billCategory') || document.getElementById('billCategory')?.value,
-                barcode: formData.get('billBarcode') || document.getElementById('billBarcode')?.value || ''
-            };
-
-            // Validation
-            if (!billData.name || billData.name.trim() === '') {
-                throw new Error('Nome do boleto é obrigatório');
-            }
-            if (!billData.amount || billData.amount <= 0) {
-                throw new Error('Valor deve ser maior que zero');
-            }
-            if (!billData.dueDate) {
-                throw new Error('Data de vencimento é obrigatória');
-            }
-
-            const bill = {
-                id: this.editingBillId || Date.now(),
-                name: billData.name.trim(),
-                amount: billData.amount,
-                dueDate: billData.dueDate,
-                category: billData.category || 'other',
-                barcode: billData.barcode.trim(),
-                status: 'pending',
-                createdAt: this.editingBillId ? 
-                    this.bills.find(b => b.id == this.editingBillId)?.createdAt || new Date().toISOString() :
-                    new Date().toISOString(),
-                updatedAt: new Date().toISOString()
-            };
-
-            if (this.editingBillId) {
-                const billIndex = this.bills.findIndex(b => b.id == this.editingBillId);
-                if (billIndex !== -1) {
-                    // Preserve original status and payment info
-                    const originalBill = this.bills[billIndex];
-                    bill.status = originalBill.status;
-                    if (originalBill.paidAt) {
-                        bill.paidAt = originalBill.paidAt;
+                try {
+                    this.showLoadingOverlay('Importando dados...');
+                    
+                    const text = await this.readFileAsText(file);
+                    const importData = JSON.parse(text);
+                    
+                    // Validate import data structure
+                    if (!importData || typeof importData !== 'object') {
+                        throw new Error('Arquivo inválido');
                     }
-                    this.bills[billIndex] = bill;
-                }
-                this.editingBillId = null;
-            } else {
-                this.bills.push(bill);
-            }
-
-            await this.saveData();
-            this.renderBills();
-            this.updateDashboardMetrics();
-            this.renderCashflowChart(); // Update chart when bill is added/updated
-            closeModal('addBillModal');
-            form.reset();
-            
-            this.showToast(this.editingBillId ? 'Boleto atualizado com sucesso!' : 'Boleto adicionado com sucesso!', 'success');
-        } catch (error) {
-            console.error('Erro ao adicionar/atualizar boleto:', error);
-            this.showToast(error.message || 'Erro ao salvar boleto', 'error');
-        }
-    }
-
-    async addInvoice() {
-        try {
-            const form = document.getElementById('addInvoiceForm');
-            if (!form) {
-                throw new Error('Formulário não encontrado');
-            }
-
-            const formData = new FormData(form);
-            const invoiceData = {
-                number: formData.get('invoiceNumber') || document.getElementById('invoiceNumber')?.value,
-                supplier: formData.get('invoiceSupplier') || document.getElementById('invoiceSupplier')?.value,
-                amount: parseFloat(formData.get('invoiceAmount') || document.getElementById('invoiceAmount')?.value),
-                date: formData.get('invoiceDate') || document.getElementById('invoiceDate')?.value,
-                category: formData.get('invoiceCategory') || document.getElementById('invoiceCategory')?.value,
-                status: formData.get('invoiceStatus') || document.getElementById('invoiceStatus')?.value
-            };
-
-            // Validation
-            if (!invoiceData.number || invoiceData.number.trim() === '') {
-                throw new Error('Número da nota fiscal é obrigatório');
-            }
-            if (!invoiceData.supplier || invoiceData.supplier.trim() === '') {
-                throw new Error('Fornecedor é obrigatório');
-            }
-            if (!invoiceData.amount || invoiceData.amount <= 0) {
-                throw new Error('Valor deve ser maior que zero');
-            }
-            if (!invoiceData.date) {
-                throw new Error('Data é obrigatória');
-            }
-
-            const invoice = {
-                id: this.editingInvoiceId || Date.now(),
-                number: invoiceData.number.trim(),
-                supplier: invoiceData.supplier.trim(),
-                amount: invoiceData.amount,
-                date: invoiceData.date,
-                category: invoiceData.category || 'other',
-                status: invoiceData.status || 'received',
-                createdAt: this.editingInvoiceId ? 
-                    this.invoices.find(i => i.id == this.editingInvoiceId)?.createdAt || new Date().toISOString() :
-                    new Date().toISOString(),
-                updatedAt: new Date().toISOString()
-            };
-
-            if (this.editingInvoiceId) {
-                const invoiceIndex = this.invoices.findIndex(i => i.id == this.editingInvoiceId);
-                if (invoiceIndex !== -1) {
-                    this.invoices[invoiceIndex] = invoice;
-                }
-                this.editingInvoiceId = null;
-            } else {
-                this.invoices.push(invoice);
-            }
-
-            await this.saveData();
-            this.renderInvoices();
-            this.renderCashflowChart(); // Update chart when invoice is added/updated
-            closeModal('addInvoiceModal');
-            form.reset();
-            
-            this.showToast(this.editingInvoiceId ? 'Nota fiscal atualizada com sucesso!' : 'Nota fiscal adicionada com sucesso!', 'success');
-        } catch (error) {
-            console.error('Erro ao adicionar/atualizar nota fiscal:', error);
-            this.showToast(error.message || 'Erro ao salvar nota fiscal', 'error');
-        }
-    }
-
-    async addRevenue() {
-        try {
-            const form = document.getElementById('addRevenueForm');
-            if (!form) {
-                throw new Error('Formulário não encontrado');
-            }
-
-            const formData = new FormData(form);
-            const revenueData = {
-                description: formData.get('revenueDescription') || document.getElementById('revenueDescription')?.value,
-                amount: parseFloat(formData.get('revenueAmount') || document.getElementById('revenueAmount')?.value),
-                date: formData.get('revenueDate') || document.getElementById('revenueDate')?.value,
-                category: formData.get('revenueCategory') || document.getElementById('revenueCategory')?.value,
-                source: formData.get('revenueSource') || document.getElementById('revenueSource')?.value || '',
-                notes: formData.get('revenueNotes') || document.getElementById('revenueNotes')?.value || ''
-            };
-
-            // Validation
-            if (!revenueData.description || revenueData.description.trim() === '') {
-                throw new Error('Descrição da receita é obrigatória');
-            }
-            if (!revenueData.amount || revenueData.amount <= 0) {
-                throw new Error('Valor deve ser maior que zero');
-            }
-            if (!revenueData.date) {
-                throw new Error('Data é obrigatória');
-            }
-
-            const revenue = {
-                id: this.editingRevenueId || Date.now(),
-                description: revenueData.description.trim(),
-                amount: revenueData.amount,
-                date: revenueData.date,
-                category: revenueData.category || 'other',
-                source: revenueData.source.trim(),
-                notes: revenueData.notes.trim(),
-                createdAt: this.editingRevenueId ? 
-                    this.revenues.find(r => r.id == this.editingRevenueId)?.createdAt || new Date().toISOString() :
-                    new Date().toISOString(),
-                updatedAt: new Date().toISOString()
-            };
-
-            if (this.editingRevenueId) {
-                const revenueIndex = this.revenues.findIndex(r => r.id == this.editingRevenueId);
-                if (revenueIndex !== -1) {
-                    this.revenues[revenueIndex] = revenue;
-                }
-                this.editingRevenueId = null;
-            } else {
-                this.revenues.push(revenue);
-            }
-
-            await this.saveData();
-            this.renderRevenues();
-            this.updateDashboardMetrics();
-            this.renderCashflowChart(); // Update chart when revenue is added/updated
-            closeModal('addRevenueModal');
-            form.reset();
-            
-            this.showToast(this.editingRevenueId ? 'Receita atualizada com sucesso!' : 'Receita adicionada com sucesso!', 'success');
-        } catch (error) {
-            console.error('Erro ao adicionar/atualizar receita:', error);
-            this.showToast(error.message || 'Erro ao salvar receita', 'error');
-        }
-    }
-
-    editRevenue(revenueId) {
-        try {
-            const revenue = this.revenues.find(r => r.id == revenueId);
-            if (!revenue) {
-                throw new Error('Receita não encontrada');
-            }
-
-            // Populate form with revenue data
-            document.getElementById('revenueDescription').value = revenue.description || '';
-            document.getElementById('revenueAmount').value = revenue.amount || '';
-            document.getElementById('revenueDate').value = revenue.date || '';
-            document.getElementById('revenueCategory').value = revenue.category || 'other';
-            document.getElementById('revenueSource').value = revenue.source || '';
-            document.getElementById('revenueNotes').value = revenue.notes || '';
-
-            // Store the ID for updating
-            this.editingRevenueId = revenueId;
-            
-            // Change form title and button text
-            const modalTitle = document.querySelector('#addRevenueModal .modal-header h3');
-            const submitButton = document.querySelector('#addRevenueForm button[type="submit"]');
-            
-            if (modalTitle) modalTitle.textContent = 'Editar Receita';
-            if (submitButton) submitButton.textContent = 'Atualizar';
-
-            openAddRevenueModal();
-        } catch (error) {
-            console.error('Erro ao editar receita:', error);
-            this.showToast(error.message || 'Erro ao editar receita', 'error');
-        }
-    }
-
-    setupFileUpload() {
-        const dropZone = document.getElementById('dropZone');
-        const fileInput = document.getElementById('fileInput');
-
-        dropZone.addEventListener('click', () => fileInput.click());
-        
-        dropZone.addEventListener('dragover', (e) => {
-            e.preventDefault();
-            dropZone.classList.add('dragover');
-        });
-
-        dropZone.addEventListener('dragleave', () => {
-            dropZone.classList.remove('dragover');
-        });
-
-        dropZone.addEventListener('drop', (e) => {
-            e.preventDefault();
-            dropZone.classList.remove('dragover');
-            this.handleFiles(e.dataTransfer.files);
-        });
-
-        fileInput.addEventListener('change', (e) => {
-            this.handleFiles(e.target.files);
-        });
-    }
-
-    async handleFiles(files) {
-        try {
-            const progressContainer = document.getElementById('importProgress');
-            if (!progressContainer) {
-                throw new Error('Container de progresso não encontrado');
-            }
-            
-            progressContainer.innerHTML = '';
-
-            if (!files || files.length === 0) {
-                this.showToast('Nenhum arquivo selecionado', 'warning');
-                return;
-            }
-
-            for (let file of files) {
-                await this.processFile(file, progressContainer);
-            }
-        } catch (error) {
-            console.error('Erro ao processar arquivos:', error);
-            this.showToast('Erro ao processar arquivos', 'error');
-        }
-    }
-
-    async processFile(file, container) {
-        if (!file || !container) {
-            throw new Error('Arquivo ou container inválido');
-        }
-
-        const progressItem = document.createElement('div');
-        progressItem.className = 'progress-item';
-        progressItem.innerHTML = `
-            <div class="progress-header">
-                <span>${this.escapeHtml(file.name)}</span>
-                <span class="progress-status">Processando...</span>
-            </div>
-            <div class="progress-bar">
-                <div class="progress-fill" style="width: 0%"></div>
-            </div>
-        `;
-        container.appendChild(progressItem);
-
-        const progressFill = progressItem.querySelector('.progress-fill');
-        const progressStatus = progressItem.querySelector('.progress-status');
-
-        try {
-            // Simulate processing with AI
-            for (let i = 0; i <= 100; i += 10) {
-                await new Promise(resolve => setTimeout(resolve, 100));
-                if (progressFill) {
-                    progressFill.style.width = `${i}%`;
-                }
-            }
-
-            // Process file with AI engine
-            const result = await this.fileProcessor.processFile(file);
-            
-            if (!result || !result.data) {
-                throw new Error('Resultado de processamento inválido');
-            }
-
-            if (result.type === 'bill') {
-                if (this.validateBillData(result.data)) {
-                    this.bills.push(result.data);
-                    await this.saveData();
+                    
+                    // Confirm import
+                    if (!confirm('Importar dados irá substituir todos os dados atuais. Deseja continuar?')) {
+                        this.hideLoadingOverlay();
+                        return;
+                    }
+                    
+                    await this.storageManager.importData(importData);
+                    await this.loadData();
+                    
+                    // Re-render all sections
+                    this.renderDashboard();
                     this.renderBills();
-                } else {
-                    throw new Error('Dados do boleto inválidos');
-                }
-            } else if (result.type === 'invoice') {
-                if (this.validateInvoiceData(result.data)) {
-                    this.invoices.push(result.data);
-                    await this.saveData();
                     this.renderInvoices();
-                } else {
-                    throw new Error('Dados da nota fiscal inválidos');
+                    this.renderRevenues();
+                    
+                    this.hideLoadingOverlay();
+                    this.showToast('Dados importados com sucesso!', 'success');
+                } catch (error) {
+                    this.hideLoadingOverlay();
+                    console.error('Erro ao importar dados:', error);
+                    this.showToast('Erro ao importar dados: ' + error.message, 'error');
                 }
-            }
-
-            if (progressStatus) {
-                progressStatus.textContent = 'Concluído';
-                progressStatus.style.color = 'var(--success-color)';
-            }
+            };
             
-            this.showToast(`${file.name} processado com sucesso!`, 'success');
+            input.click();
         } catch (error) {
-            console.error('Erro ao processar arquivo:', error);
-            if (progressStatus) {
-                progressStatus.textContent = 'Erro';
-                progressStatus.style.color = 'var(--danger-color)';
-            }
-            this.showToast(`Erro ao processar ${file.name}: ${error.message}`, 'error');
+            console.error('Erro ao importar dados:', error);
+            this.showToast('Erro ao importar dados', 'error');
         }
+    }
+
+    readFileAsText(file) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = e => resolve(e.target.result);
+            reader.onerror = () => reject(new Error('Erro ao ler arquivo'));
+            reader.readAsText(file);
+        });
     }
 
     scheduleNotifications() {
-        // Check for notifications every hour
-        setInterval(() => {
-            this.checkUpcomingBills();
-        }, 3600000); // 1 hour
-
-        // Initial check
-        this.checkUpcomingBills();
+        try {
+            // Check for notifications every hour
+            setInterval(() => {
+                this.checkAndSendNotifications();
+            }, 3600000); // 1 hour
+            
+            // Initial check after 30 seconds
+            setTimeout(() => {
+                this.checkAndSendNotifications();
+            }, 30000);
+        } catch (error) {
+            console.error('Erro ao agendar notificações:', error);
+        }
     }
 
-    checkUpcomingBills() {
-        if (!this.settings.whatsappEnabled || !this.isInitialized) return;
-
+    async checkAndSendNotifications() {
         try {
+            if (!this.settings.emailEnabled || !this.settings.emailAddress) {
+                return;
+            }
+
             const now = new Date();
             const upcomingBills = this.bills.filter(bill => {
                 if (!bill || bill.status !== 'pending' || !bill.dueDate) return false;
@@ -1469,20 +2226,44 @@ class FinanceAI {
                 if (isNaN(dueDate.getTime())) return false;
                 
                 const daysDiff = Math.ceil((dueDate - now) / (1000 * 60 * 60 * 24));
-                
-                return daysDiff === this.settings.reminderDays;
+                return daysDiff <= this.settings.reminderDays && daysDiff >= 0;
             });
 
-            upcomingBills.forEach(bill => {
-                if (this.settings.whatsappNumber) {
-                    this.whatsappIntegration.sendReminder(bill, this.settings.whatsappNumber)
-                        .catch(error => {
-                            console.error('Erro ao enviar lembrete WhatsApp:', error);
-                        });
-                }
-            });
+            const overdueBills = this.bills.filter(bill => this.isBillOverdue(bill));
+
+            if (upcomingBills.length > 0 || overdueBills.length > 0) {
+                await this.emailIntegration.sendBulkReminders(
+                    [...upcomingBills, ...overdueBills], 
+                    this.settings.emailAddress
+                );
+            }
         } catch (error) {
-            console.error('Erro ao verificar boletos próximos do vencimento:', error);
+            console.error('Erro ao verificar e enviar notificações:', error);
+        }
+    }
+
+    isBillOverdue(bill) {
+        try {
+            if (!bill || bill.status !== 'pending' || !bill.dueDate) return false;
+            const dueDate = new Date(bill.dueDate);
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            return dueDate < today;
+        } catch (error) {
+            return false;
+        }
+    }
+
+    getDaysUntilDue(dateString) {
+        try {
+            if (!dateString) return null;
+            const dueDate = new Date(dateString);
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            dueDate.setHours(0, 0, 0, 0);
+            return Math.ceil((dueDate - today) / (1000 * 60 * 60 * 24));
+        } catch (error) {
+            return null;
         }
     }
 
@@ -1490,8 +2271,7 @@ class FinanceAI {
         const statusMap = {
             'pending': 'Pendente',
             'paid': 'Pago',
-            'overdue': 'Vencido',
-            'received': 'Recebido'
+            'overdue': 'Vencido'
         };
         return statusMap[status] || status;
     }
@@ -1505,6 +2285,10 @@ class FinanceAI {
             'supplies': 'Suprimentos',
             'services': 'Serviços',
             'equipment': 'Equipamentos',
+            'sales': 'Vendas',
+            'freelance': 'Freelance',
+            'investments': 'Investimentos',
+            'rental': 'Aluguel',
             'other': 'Outros'
         };
         return categoryMap[category] || category;
@@ -1521,202 +2305,689 @@ class FinanceAI {
         }
     }
 
-    escapeHtml(text) {
-        if (typeof text !== 'string') return '';
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
+    addBillFilters() {
+        try {
+            const filters = document.getElementById('billsFilters');
+            if (!filters) return;
+
+            // Clear existing filters
+            filters.innerHTML = '';
+            
+            // Add filter buttons
+            const filterButtons = document.createElement('div');
+            filterButtons.className = 'filter-buttons';
+            
+            // Add status filter
+            const statusFilter = document.createElement('div');
+            statusFilter.className = 'filter-group';
+            
+            const statusOptions = ['pending', 'paid', 'overdue'];
+            statusOptions.forEach(status => {
+                const button = document.createElement('button');
+                button.className = `filter-button ${status === 'pending' ? 'active' : ''}`;
+                button.textContent = this.getStatusText(status);
+                button.onclick = () => this.applyBillFilter(status);
+                statusFilter.appendChild(button);
+            });
+            
+            filterButtons.appendChild(statusFilter);
+            
+            // Add category filter
+            const categoryFilter = document.createElement('div');
+            categoryFilter.className = 'filter-group';
+            
+            const categoryOptions = ['utilities', 'rent', 'insurance', 'taxes', 'supplies', 'services', 'equipment', 'sales', 'freelance', 'investments', 'rental', 'other'];
+            categoryOptions.forEach(category => {
+                const button = document.createElement('button');
+                button.className = `filter-button ${this.settings.showPaidBills ? 'active' : ''}`;
+                button.textContent = this.getCategoryText(category);
+                button.onclick = () => this.applyBillFilter(category);
+                categoryFilter.appendChild(button);
+            });
+            
+            filterButtons.appendChild(categoryFilter);
+            
+            filters.appendChild(filterButtons);
+        } catch (error) {
+            console.error('Erro ao adicionar filtros de boletos:', error);
+        }
     }
 
-    showToast(message, type = 'info') {
+    applyBillFilter(filterType) {
         try {
-            if (!message) return;
-            
-            const toast = document.createElement('div');
-            toast.className = `toast toast-${type}`;
-            toast.textContent = message;
-            toast.style.cssText = `
-                position: fixed;
-                top: 20px;
-                right: 20px;
-                padding: 1rem 1.5rem;
-                background: var(--surface-color);
-                border-left: 4px solid var(--${type === 'success' ? 'success' : type === 'error' ? 'danger' : 'info'}-color);
-                border-radius: var(--radius);
-                box-shadow: var(--shadow-lg);
-                z-index: 1001;
-                animation: slideIn 0.3s ease;
-                max-width: 300px;
-                word-wrap: break-word;
-            `;
-            
-            document.body.appendChild(toast);
-            
-            setTimeout(() => {
-                if (toast.parentNode) {
-                    toast.remove();
-                }
-            }, 3000);
+            // Filter bills based on status or category
+            if (['pending', 'paid', 'overdue'].includes(filterType)) {
+                this.settings.showPaidBills = filterType === 'paid';
+                this.renderBills();
+            } else {
+                // Filter by category
+                this.bills = this.bills.filter(bill => {
+                    if (!bill || !bill.category) return false;
+                    return this.getCategoryText(bill.category) === filterType;
+                });
+                this.renderBills();
+            }
         } catch (error) {
-            console.error('Erro ao exibir toast:', error);
+            console.error('Erro ao aplicar filtro:', error);
+        }
+    }
+
+    renderInvoices() {
+        try {
+            const invoicesList = document.getElementById('invoicesList');
+            if (!invoicesList) return;
+
+            if (!Array.isArray(this.invoices) || this.invoices.length === 0) {
+                invoicesList.innerHTML = `
+                    <div class="empty-state">
+                        <i class="fas fa-receipt"></i>
+                        <p>Nenhuma nota fiscal encontrada.</p>
+                        <small style="margin-top: 0.5rem; display: block; opacity: 0.7;">
+                            Use o botão "Adicionar Nota" para começar
+                        </small>
+                    </div>
+                `;
+                return;
+            }
+
+            // Sort invoices by date (most recent first)
+            const sortedInvoices = [...this.invoices].sort((a, b) => {
+                const dateA = new Date(a.createdAt || a.date);
+                const dateB = new Date(b.createdAt || b.date);
+                return dateB - dateA;
+            });
+
+            invoicesList.innerHTML = sortedInvoices.map(invoice => {
+                if (!this.validateInvoiceData(invoice)) return '';
+                
+                return `
+                    <div class="invoice-item ${this.settings.compactView ? 'compact' : ''}" data-invoice-id="${invoice.id}">
+                        <div class="item-header">
+                            <h3 class="item-title">NF ${this.escapeHtml(invoice.number)}</h3>
+                            <span class="item-status status-${invoice.status || 'received'}">
+                                ${invoice.status === 'received' ? 'Recebida' : 'Pendente'}
+                            </span>
+                        </div>
+                        ${!this.settings.compactView ? `
+                            <div class="item-details">
+                                <div class="detail-item">
+                                    <span class="detail-label">Fornecedor</span>
+                                    <span class="detail-value">${this.escapeHtml(invoice.supplier)}</span>
+                                </div>
+                                <div class="detail-item">
+                                    <span class="detail-label">Valor</span>
+                                    <span class="detail-value amount">R$ ${invoice.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                                </div>
+                                <div class="detail-item">
+                                    <span class="detail-label">Data</span>
+                                    <span class="detail-value">${this.formatDate(invoice.date)}</span>
+                                </div>
+                                <div class="detail-item">
+                                    <span class="detail-label">Categoria</span>
+                                    <span class="detail-value">${this.getCategoryText(invoice.category)}</span>
+                                </div>
+                            </div>
+                        ` : `
+                            <div class="compact-details">
+                                <span class="compact-amount">R$ ${invoice.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                                <span class="compact-date">${this.formatDate(invoice.date)}</span>
+                            </div>
+                        `}
+                        <div class="item-actions">
+                            <button class="btn-sm btn-warning" onclick="financeAI.editInvoice('${invoice.id}')">
+                                <i class="fas fa-edit"></i> Editar
+                            </button>
+                            <button class="btn-sm btn-danger" onclick="financeAI.deleteInvoice('${invoice.id}')">
+                                <i class="fas fa-trash"></i> Excluir
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }).filter(html => html).join('');
+
+        } catch (error) {
+            console.error('Erro ao renderizar notas fiscais:', error);
+            const invoicesList = document.getElementById('invoicesList');
+            if (invoicesList) {
+                invoicesList.innerHTML = `
+                    <div class="error-state">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        <p>Erro ao carregar notas fiscais.</p>
+                        <button class="btn btn-primary" onclick="financeAI.renderInvoices()" style="margin-top: 1rem;">
+                            <i class="fas fa-refresh"></i> Tentar Novamente
+                        </button>
+                    </div>
+                `;
+            }
+        }
+    }
+
+    editInvoice(invoiceId) {
+        try {
+            const invoice = this.invoices.find(i => i.id == invoiceId);
+            if (!invoice) {
+                this.showToast('Nota fiscal não encontrada', 'error');
+                return;
+            }
+            
+            // Set editing mode
+            this.editingInvoiceId = invoiceId;
+            
+            // Fill form with invoice data
+            document.getElementById('invoiceNumber').value = invoice.number || '';
+            document.getElementById('invoiceSupplier').value = invoice.supplier || '';
+            document.getElementById('invoiceAmount').value = invoice.amount || '';
+            document.getElementById('invoiceDate').value = invoice.date || '';
+            document.getElementById('invoiceCategory').value = invoice.category || '';
+            document.getElementById('invoiceStatus').value = invoice.status || '';
+            
+            // Open modal
+            openAddInvoiceModal();
+            
+        } catch (error) {
+            console.error('Erro ao editar nota fiscal:', error);
+            this.showToast('Erro ao carregar dados da nota fiscal', 'error');
+        }
+    }
+
+    async deleteInvoice(invoiceId) {
+        try {
+            const invoice = this.invoices.find(i => i.id == invoiceId);
+            if (!invoice) {
+                this.showToast('Nota fiscal não encontrada', 'error');
+                return;
+            }
+            
+            if (!confirm(`Tem certeza que deseja excluir a nota fiscal "${invoice.number}"?`)) {
+                return;
+            }
+            
+            this.invoices = this.invoices.filter(i => i.id != invoiceId);
+            await this.saveData();
+            this.renderInvoices();
+            this.renderDashboard();
+            this.showToast('Nota fiscal excluída com sucesso!', 'success');
+            
+        } catch (error) {
+            console.error('Erro ao excluir nota fiscal:', error);
+            this.showToast('Erro ao excluir nota fiscal', 'error');
+        }
+    }
+
+    renderRevenues() {
+        try {
+            const revenuesList = document.getElementById('revenuesList');
+            if (!revenuesList) return;
+
+            if (!Array.isArray(this.revenues) || this.revenues.length === 0) {
+                revenuesList.innerHTML = `
+                    <div class="empty-state">
+                        <i class="fas fa-coins"></i>
+                        <p>Nenhuma receita encontrada.</p>
+                        <small style="margin-top: 0.5rem; display: block; opacity: 0.7;">
+                            Use o botão "Adicionar Receita" para começar
+                        </small>
+                    </div>
+                `;
+                return;
+            }
+
+            // Sort revenues by date (most recent first)
+            const sortedRevenues = [...this.revenues].sort((a, b) => {
+                const dateA = new Date(a.date);
+                const dateB = new Date(b.date);
+                return dateB - dateA;
+            });
+
+            revenuesList.innerHTML = sortedRevenues.map(revenue => {
+                if (!this.validateRevenueData(revenue)) return '';
+                
+                return `
+                    <div class="invoice-item ${this.settings.compactView ? 'compact' : ''}" data-revenue-id="${revenue.id}">
+                        <div class="item-header">
+                            <h3 class="item-title text-success">${this.escapeHtml(revenue.description)}</h3>
+                            <span class="item-status status-paid">
+                                Receita
+                            </span>
+                        </div>
+                        ${!this.settings.compactView ? `
+                            <div class="item-details">
+                                <div class="detail-item">
+                                    <span class="detail-label">Valor</span>
+                                    <span class="detail-value amount text-success">R$ ${revenue.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                                </div>
+                                <div class="detail-item">
+                                    <span class="detail-label">Data</span>
+                                    <span class="detail-value">${this.formatDate(revenue.date)}</span>
+                                </div>
+                                <div class="detail-item">
+                                    <span class="detail-label">Categoria</span>
+                                    <span class="detail-value">${this.getCategoryText(revenue.category)}</span>
+                                </div>
+                                ${revenue.source ? `
+                                    <div class="detail-item">
+                                        <span class="detail-label">Fonte</span>
+                                        <span class="detail-value">${this.escapeHtml(revenue.source)}</span>
+                                    </div>
+                                ` : ''}
+                            </div>
+                        ` : `
+                            <div class="compact-details">
+                                <span class="compact-amount text-success">R$ ${revenue.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                                <span class="compact-date">${this.formatDate(revenue.date)}</span>
+                            </div>
+                        `}
+                        ${revenue.notes ? `
+                            <div style="margin: 0.5rem 0; padding: 0.5rem; background: var(--background-color); border-radius: 4px; font-size: 0.875rem; color: var(--text-secondary);">
+                                <strong>Observações:</strong> ${this.escapeHtml(revenue.notes)}
+                            </div>
+                        ` : ''}
+                        <div class="item-actions">
+                            <button class="btn-sm btn-warning" onclick="financeAI.editRevenue('${revenue.id}')">
+                                <i class="fas fa-edit"></i> Editar
+                            </button>
+                            <button class="btn-sm btn-danger" onclick="financeAI.deleteRevenue('${revenue.id}')">
+                                <i class="fas fa-trash"></i> Excluir
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }).filter(html => html).join('');
+
+        } catch (error) {
+            console.error('Erro ao renderizar receitas:', error);
+            const revenuesList = document.getElementById('revenuesList');
+            if (revenuesList) {
+                revenuesList.innerHTML = `
+                    <div class="error-state">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        <p>Erro ao carregar receitas.</p>
+                        <button class="btn btn-primary" onclick="financeAI.renderRevenues()" style="margin-top: 1rem;">
+                            <i class="fas fa-refresh"></i> Tentar Novamente
+                        </button>
+                    </div>
+                `;
+            }
+        }
+    }
+
+    editRevenue(revenueId) {
+        try {
+            const revenue = this.revenues.find(r => r.id == revenueId);
+            if (!revenue) {
+                this.showToast('Receita não encontrada', 'error');
+                return;
+            }
+            
+            // Set editing mode
+            this.editingRevenueId = revenueId;
+            
+            // Fill form with revenue data
+            document.getElementById('revenueDescription').value = revenue.description || '';
+            document.getElementById('revenueAmount').value = revenue.amount || '';
+            document.getElementById('revenueDate').value = revenue.date || '';
+            document.getElementById('revenueCategory').value = revenue.category || '';
+            document.getElementById('revenueSource').value = revenue.source || '';
+            document.getElementById('revenueNotes').value = revenue.notes || '';
+            
+            // Open modal
+            openAddRevenueModal();
+            
+        } catch (error) {
+            console.error('Erro ao editar receita:', error);
+            this.showToast('Erro ao carregar dados da receita', 'error');
         }
     }
 
     async deleteRevenue(revenueId) {
         try {
-            if (!confirm('Tem certeza que deseja excluir esta receita?')) {
+            const revenue = this.revenues.find(r => r.id == revenueId);
+            if (!revenue) {
+                this.showToast('Receita não encontrada', 'error');
+                return;
+            }
+            
+            if (!confirm(`Tem certeza que deseja excluir a receita "${revenue.description}"?`)) {
+                return;
+            }
+            
+            this.revenues = this.revenues.filter(r => r.id != revenueId);
+            await this.saveData();
+            this.renderRevenues();
+            this.renderDashboard();
+            this.showToast('Receita excluída com sucesso!', 'success');
+            
+        } catch (error) {
+            console.error('Erro ao excluir receita:', error);
+            this.showToast('Erro ao excluir receita', 'error');
+        }
+    }
+
+    renderNotifications() {
+        try {
+            const notificationsList = document.getElementById('notificationsList');
+            if (!notificationsList) return;
+
+            // Generate notifications
+            const notifications = this.generateNotifications();
+
+            if (notifications.length === 0) {
+                notificationsList.innerHTML = `
+                    <div class="empty-state">
+                        <i class="fas fa-bell"></i>
+                        <p>Nenhuma notificação no momento.</p>
+                        <small style="margin-top: 0.5rem; display: block; opacity: 0.7;">
+                            Você será notificado sobre vencimentos e atualizações importantes
+                        </small>
+                    </div>
+                `;
                 return;
             }
 
-            const revenueIndex = this.revenues.findIndex(r => r.id == revenueId);
-            if (revenueIndex === -1) {
-                throw new Error('Receita não encontrada');
+            notificationsList.innerHTML = notifications.map(notification => `
+                <div class="notification-item ${notification.type}">
+                    <div class="notification-header">
+                        <span class="notification-title">${notification.title}</span>
+                        <span class="notification-time">${this.formatRelativeTime(notification.time)}</span>
+                    </div>
+                    <div class="notification-message">${notification.message}</div>
+                </div>
+            `).join('');
+
+            // Update notification count in header
+            const notificationCount = document.querySelector('.notification-count');
+            if (notificationCount) {
+                notificationCount.textContent = notifications.length;
+                notificationCount.style.display = notifications.length > 0 ? 'block' : 'none';
             }
 
-            this.revenues.splice(revenueIndex, 1);
-            await this.saveData();
-            this.renderRevenues();
-            this.updateDashboardMetrics();
-            this.renderCashflowChart(); // Update chart when revenue is deleted
-            
-            this.showToast('Receita excluída com sucesso!', 'success');
         } catch (error) {
-            console.error('Erro ao excluir receita:', error);
-            this.showToast(error.message || 'Erro ao excluir receita', 'error');
+            console.error('Erro ao renderizar notificações:', error);
         }
     }
 
-    generateFinancialSummary() {
+    generateNotifications() {
         try {
-            const currentDate = new Date();
-            const currentMonth = currentDate.getMonth();
-            const currentYear = currentDate.getFullYear();
+            const notifications = [];
+            const now = new Date();
 
-            // Calculate monthly totals
-            const monthlyRevenues = this.revenues
-                .filter(revenue => {
-                    const revenueDate = new Date(revenue.date);
-                    return revenueDate.getMonth() === currentMonth && revenueDate.getFullYear() === currentYear;
+            // Check for overdue bills
+            const overdueBills = this.bills.filter(bill => this.isBillOverdue(bill));
+            if (overdueBills.length > 0) {
+                notifications.push({
+                    type: 'danger',
+                    title: 'Boletos Vencidos',
+                    message: `${overdueBills.length} boletos estão vencidos. Verifique e efetue os pagamentos para evitar juros.`,
+                    time: now.toISOString()
+                });
+            }
+
+            // Check for upcoming bills
+            const upcomingBills = this.bills.filter(bill => {
+                if (!bill || bill.status !== 'pending') return false;
+                const daysUntil = this.getDaysUntilDue(bill.dueDate);
+                return daysUntil > 0 && daysUntil <= 3;
+            });
+
+            if (upcomingBills.length > 0) {
+                notifications.push({
+                    type: 'warning',
+                    title: 'Vencimentos Próximos',
+                    message: `${upcomingBills.length} boletos vencem nos próximos 3 dias. Organize-se para os pagamentos.`,
+                    time: now.toISOString()
+                });
+            }
+
+            // Check for high monthly expenses
+            const currentMonth = now.getMonth();
+            const currentYear = now.getFullYear();
+            const monthlyExpenses = [...this.bills, ...this.invoices]
+                .filter(item => {
+                    if (!item) return false;
+                    const date = new Date(item.dueDate || item.date);
+                    return date.getMonth() === currentMonth && date.getFullYear() === currentYear;
                 })
-                .reduce((sum, revenue) => sum + revenue.amount, 0);
+                .reduce((sum, item) => sum + (item.amount || 0), 0);
 
-            const monthlyExpenses = this.bills
-                .filter(bill => {
-                    const billDate = new Date(bill.dueDate);
-                    return billDate.getMonth() === currentMonth && billDate.getFullYear() === currentYear;
-                })
-                .reduce((sum, bill) => sum + bill.amount, 0);
+            if (monthlyExpenses > 10000) {
+                notifications.push({
+                    type: 'info',
+                    title: 'Alto Volume de Gastos',
+                    message: `Seus gastos deste mês totalizam R$ ${monthlyExpenses.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}. Monitore seus gastos.`,
+                    time: now.toISOString()
+                });
+            }
 
-            const monthlyInvoices = this.invoices
-                .filter(invoice => {
-                    const invoiceDate = new Date(invoice.date);
-                    return invoiceDate.getMonth() === currentMonth && invoiceDate.getFullYear() === currentYear;
-                })
-                .reduce((sum, invoice) => sum + invoice.amount, 0);
+            return notifications.sort((a, b) => new Date(b.time) - new Date(a.time));
 
-            const netCashFlow = monthlyRevenues - (monthlyExpenses + monthlyInvoices);
-
-            return {
-                monthlyRevenues,
-                monthlyExpenses: monthlyExpenses + monthlyInvoices,
-                netCashFlow,
-                totalPendingBills: this.bills.filter(bill => bill.status === 'pending').length,
-                totalOverdueBills: this.bills.filter(bill => {
-                    const dueDate = new Date(bill.dueDate);
-                    return bill.status === 'pending' && dueDate < currentDate;
-                }).length
-            };
         } catch (error) {
-            console.error('Erro ao gerar resumo financeiro:', error);
-            return {
-                monthlyRevenues: 0,
-                monthlyExpenses: 0,
-                netCashFlow: 0,
-                totalPendingBills: 0,
-                totalOverdueBills: 0
-            };
+            console.error('Erro ao gerar notificações:', error);
+            return [];
         }
     }
 
-    async exportFinancialData() {
+    renderSettings() {
         try {
-            const data = await this.storageManager.exportData();
-            const summary = this.generateFinancialSummary();
+            // Update storage info
+            this.updateStorageInfo();
+            this.updateBackupInfo();
             
-            const exportData = {
-                ...data,
-                summary,
-                exportedAt: new Date().toISOString()
-            };
+            // Load current settings into form
+            const autoBackup = document.getElementById('autoBackup');
+            if (autoBackup) {
+                autoBackup.checked = this.settings.autoBackup;
+            }
+            
+            const defaultReportPeriod = document.getElementById('defaultReportPeriod');
+            if (defaultReportPeriod) {
+                defaultReportPeriod.value = this.settings.defaultReportPeriod;
+            }
+            
+            const showPaidBills = document.getElementById('showPaidBills');
+            if (showPaidBills) {
+                showPaidBills.checked = this.settings.showPaidBills;
+            }
+            
+            const compactView = document.getElementById('compactView');
+            if (compactView) {
+                compactView.checked = this.settings.compactView;
+            }
 
-            const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
-            const url = URL.createObjectURL(blob);
-            
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `financeai-export-${new Date().toISOString().split('T')[0]}.json`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-            
-            this.showToast('Dados exportados com sucesso!', 'success');
         } catch (error) {
-            console.error('Erro ao exportar dados:', error);
-            this.showToast('Erro ao exportar dados', 'error');
+            console.error('Erro ao renderizar configurações:', error);
         }
     }
 
-    async importFinancialData() {
+    async updateStorageInfo() {
         try {
-            const input = document.createElement('input');
-            input.type = 'file';
-            input.accept = '.json';
+            const storageInfo = await this.storageManager.getStorageInfo();
             
-            input.onchange = async (event) => {
-                const file = event.target.files[0];
-                if (!file) return;
+            const storageTypeElement = document.getElementById('storageType');
+            const documentCountElement = document.getElementById('documentCount');
+            
+            if (storageTypeElement) {
+                storageTypeElement.textContent = storageInfo.storageType;
+            }
+            
+            if (documentCountElement) {
+                const totalDocs = storageInfo.bills + storageInfo.invoices + storageInfo.revenues;
+                documentCountElement.textContent = totalDocs;
+            }
 
-                const reader = new FileReader();
-                reader.onload = async (e) => {
-                    try {
-                        const data = JSON.parse(e.target.result);
-                        
-                        if (!data || !data.bills && !data.invoices && !data.revenues) {
-                            throw new Error('Formato de arquivo inválido');
-                        }
+        } catch (error) {
+            console.error('Erro ao atualizar informações de armazenamento:', error);
+        }
+    }
 
-                        await this.storageManager.importData(data);
-                        await this.loadData();
-                        
-                        this.renderSection('dashboard');
-                        this.renderSection('bills');
-                        this.renderSection('invoices');
-                        this.renderSection('revenues');
-                        
-                        this.showToast('Dados importados com sucesso!', 'success');
-                    } catch (error) {
-                        console.error('Erro ao importar dados:', error);
-                        this.showToast('Erro ao importar dados: ' + error.message, 'error');
+    loadDatabaseSettings() {
+        try {
+            const storageMode = this.storageManager.getStorageMode();
+            const mysqlConfig = this.storageManager.getMySQLConfig();
+            
+            // Update storage mode selector
+            const storageModeSelect = document.getElementById('storageMode');
+            if (storageModeSelect) {
+                storageModeSelect.value = storageMode;
+                this.onStorageModeChange(); // Update UI based on current mode
+            }
+            
+            // Load MySQL settings if available
+            if (mysqlConfig) {
+                const fields = ['mysqlHost', 'mysqlPort', 'mysqlDatabase', 'mysqlUsername', 'mysqlPassword'];
+                fields.forEach(field => {
+                    const element = document.getElementById(field);
+                    if (element && mysqlConfig[field.replace('mysql', '').toLowerCase()]) {
+                        element.value = mysqlConfig[field.replace('mysql', '').toLowerCase()];
                     }
-                };
-                reader.readAsText(file);
-            };
-            
-            input.click();
+                });
+                
+                // Update status
+                this.updateMySQLStatus(true, 'Configurado');
+            }
+
         } catch (error) {
-            console.error('Erro ao iniciar importação:', error);
-            this.showToast('Erro ao iniciar importação', 'error');
+            console.error('Erro ao carregar configurações de banco:', error);
+        }
+    }
+
+    onStorageModeChange() {
+        try {
+            const storageMode = document.getElementById('storageMode').value;
+            const mysqlSettings = document.getElementById('mysqlSettings');
+            
+            if (mysqlSettings) {
+                mysqlSettings.style.display = storageMode === 'mysql' ? 'block' : 'none';
+            }
+
+        } catch (error) {
+            console.error('Erro ao alterar modo de armazenamento:', error);
+        }
+    }
+
+    async testMySQLConnection() {
+        try {
+            const host = document.getElementById('mysqlHost').value;
+            const port = document.getElementById('mysqlPort').value;
+            const database = document.getElementById('mysqlDatabase').value;
+            const username = document.getElementById('mysqlUsername').value;
+            const password = document.getElementById('mysqlPassword').value;
+            
+            if (!host || !database || !username) {
+                this.showToast('Preencha todos os campos obrigatórios', 'error');
+                return;
+            }
+            
+            this.updateMySQLStatus(false, 'Testando conexão...');
+            
+            const config = { host, port, database, username, password };
+            const result = await this.storageManager.testMySQLConnection(config);
+            
+            if (result.success) {
+                this.updateMySQLStatus(true, result.message);
+                document.getElementById('saveMySQLBtn').disabled = false;
+                this.showToast('Conexão testada com sucesso!', 'success');
+            } else {
+                this.updateMySQLStatus(false, result.message);
+                document.getElementById('saveMySQLBtn').disabled = true;
+                this.showToast('Erro na conexão: ' + result.message, 'error');
+            }
+
+        } catch (error) {
+            this.updateMySQLStatus(false, 'Erro no teste de conexão');
+            document.getElementById('saveMySQLBtn').disabled = true;
+            console.error('Erro ao testar conexão MySQL:', error);
+            this.showToast('Erro ao testar conexão', 'error');
+        }
+    }
+
+    updateMySQLStatus(connected, message) {
+        try {
+            const statusIndicator = document.getElementById('mysqlStatusIndicator');
+            if (statusIndicator) {
+                if (connected) {
+                    statusIndicator.innerHTML = '<i class="fas fa-circle text-success"></i> ' + message;
+                } else {
+                    statusIndicator.innerHTML = '<i class="fas fa-circle text-danger"></i> ' + message;
+                }
+            }
+        } catch (error) {
+            console.error('Erro ao atualizar status MySQL:', error);
+        }
+    }
+
+    async saveMySQLConfig() {
+        try {
+            const host = document.getElementById('mysqlHost').value;
+            const port = document.getElementById('mysqlPort').value;
+            const database = document.getElementById('mysqlDatabase').value;
+            const username = document.getElementById('mysqlUsername').value;
+            const password = document.getElementById('mysqlPassword').value;
+            
+            this.showLoadingOverlay('Migrando para MySQL...');
+            
+            const config = { host, port, database, username, password };
+            await this.storageManager.setStorageMode('mysql', config);
+            
+            this.hideLoadingOverlay();
+            this.updateStorageInfo();
+            this.showToast('Migração para MySQL concluída!', 'success');
+            
+        } catch (error) {
+            this.hideLoadingOverlay();
+            console.error('Erro ao salvar configuração MySQL:', error);
+            this.showToast('Erro na migração: ' + error.message, 'error');
+        }
+    }
+
+    async switchToLocal() {
+        try {
+            if (!confirm('Tem certeza que deseja voltar ao armazenamento local? Os dados do MySQL serão migrados.')) {
+                return;
+            }
+            
+            this.showLoadingOverlay('Migrando para armazenamento local...');
+            
+            await this.storageManager.setStorageMode('local');
+            
+            // Reset MySQL form
+            const mysqlFields = ['mysqlHost', 'mysqlPort', 'mysqlDatabase', 'mysqlUsername', 'mysqlPassword'];
+            mysqlFields.forEach(field => {
+                const element = document.getElementById(field);
+                if (element) element.value = '';
+            });
+            
+            document.getElementById('storageMode').value = 'local';
+            this.onStorageModeChange();
+            
+            this.hideLoadingOverlay();
+            this.updateStorageInfo();
+            this.showToast('Migração para armazenamento local concluída!', 'success');
+            
+        } catch (error) {
+            this.hideLoadingOverlay();
+            console.error('Erro ao migrar para local:', error);
+            this.showToast('Erro na migração: ' + error.message, 'error');
         }
     }
 }
 
-// Modal functions with error handling
 function openAddBillModal() {
     try {
         const modal = document.getElementById('addBillModal');
         if (modal) {
+            // Reset form if not editing
+            if (!window.financeAI?.editingBillId) {
+                const form = document.getElementById('addBillForm');
+                if (form) form.reset();
+            }
+            
             modal.classList.add('active');
+            
+            // Focus first input
+            setTimeout(() => {
+                const firstInput = modal.querySelector('input[type="text"]');
+                if (firstInput) firstInput.focus();
+            }, 100);
         }
     } catch (error) {
         console.error('Erro ao abrir modal de boleto:', error);
@@ -1727,7 +2998,19 @@ function openAddInvoiceModal() {
     try {
         const modal = document.getElementById('addInvoiceModal');
         if (modal) {
+            // Reset form if not editing
+            if (!window.financeAI?.editingInvoiceId) {
+                const form = document.getElementById('addInvoiceForm');
+                if (form) form.reset();
+            }
+            
             modal.classList.add('active');
+            
+            // Focus first input
+            setTimeout(() => {
+                const firstInput = modal.querySelector('input[type="text"]');
+                if (firstInput) firstInput.focus();
+            }, 100);
         }
     } catch (error) {
         console.error('Erro ao abrir modal de nota fiscal:', error);
@@ -1738,7 +3021,25 @@ function openAddRevenueModal() {
     try {
         const modal = document.getElementById('addRevenueModal');
         if (modal) {
+            // Reset form if not editing
+            if (!window.financeAI?.editingRevenueId) {
+                const form = document.getElementById('addRevenueForm');
+                if (form) form.reset();
+                
+                // Set default date to today
+                const dateInput = document.getElementById('revenueDate');
+                if (dateInput) {
+                    dateInput.value = new Date().toISOString().split('T')[0];
+                }
+            }
+            
             modal.classList.add('active');
+            
+            // Focus first input
+            setTimeout(() => {
+                const firstInput = modal.querySelector('input[type="text"]');
+                if (firstInput) firstInput.focus();
+            }, 100);
         }
     } catch (error) {
         console.error('Erro ao abrir modal de receita:', error);
@@ -1750,38 +3051,19 @@ function closeModal(modalId) {
         const modal = document.getElementById(modalId);
         if (modal) {
             modal.classList.remove('active');
-            
-            // Reset editing state when closing modals
-            if (window.financeAI) {
-                if (modalId === 'addBillModal') {
-                    window.financeAI.editingBillId = null;
-                    const modalTitle = document.querySelector('#addBillModal .modal-header h3');
-                    const submitButton = document.querySelector('#addBillForm button[type="submit"]');
-                    if (modalTitle) modalTitle.textContent = 'Adicionar Boleto';
-                    if (submitButton) submitButton.textContent = 'Salvar';
-                }
-                if (modalId === 'addInvoiceModal') {
-                    window.financeAI.editingInvoiceId = null;
-                    const modalTitle = document.querySelector('#addInvoiceModal .modal-header h3');
-                    const submitButton = document.querySelector('#addInvoiceForm button[type="submit"]');
-                    if (modalTitle) modalTitle.textContent = 'Adicionar Nota Fiscal';
-                    if (submitButton) submitButton.textContent = 'Salvar';
-                }
-                if (modalId === 'addRevenueModal') {
-                    window.financeAI.editingRevenueId = null;
-                    const modalTitle = document.querySelector('#addRevenueModal .modal-header h3');
-                    const submitButton = document.querySelector('#addRevenueForm button[type="submit"]');
-                    if (modalTitle) modalTitle.textContent = 'Adicionar Receita';
-                    if (submitButton) submitButton.textContent = 'Salvar';
-                }
-            }
+        }
+        
+        // Reset editing states
+        if (window.financeAI) {
+            delete window.financeAI.editingBillId;
+            delete window.financeAI.editingInvoiceId;
+            delete window.financeAI.editingRevenueId;
         }
     } catch (error) {
         console.error('Erro ao fechar modal:', error);
     }
 }
 
-// Initialize app with error handling
 document.addEventListener('DOMContentLoaded', async () => {
     try {
         window.financeAI = new FinanceAI();
