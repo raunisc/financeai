@@ -6,40 +6,77 @@ class StorageManager {
         this.isIndexedDBSupported = this.checkIndexedDBSupport();
         this.mysqlConfig = null;
         this.storageMode = 'local'; // 'local' or 'mysql'
-        this.initializeDB();
+        this.isInitialized = false;
+        this.initializationPromise = null;
+        this.initialize();
     }
 
     checkIndexedDBSupport() {
         return 'indexedDB' in window;
     }
 
-    async initializeDB() {
-        // Load storage mode and MySQL config from localStorage
-        const savedMode = localStorage.getItem('financeai_storage_mode');
-        const savedConfig = localStorage.getItem('financeai_mysql_config');
-        
-        if (savedMode) {
-            this.storageMode = savedMode;
-        }
-        
-        if (savedConfig) {
-            try {
-                this.mysqlConfig = JSON.parse(savedConfig);
-            } catch (error) {
-                console.error('Erro ao carregar configuração MySQL:', error);
-            }
+    async initialize() {
+        if (this.initializationPromise) {
+            return this.initializationPromise;
         }
 
-        if (this.storageMode === 'mysql' && this.mysqlConfig) {
-            await this.initializeMySQL();
-        } else {
+        this.initializationPromise = this._initialize();
+        return this.initializationPromise;
+    }
+
+    async _initialize() {
+        try {
+            // Load storage mode and MySQL config from localStorage
+            const savedMode = localStorage.getItem('financeai_storage_mode');
+            const savedConfig = localStorage.getItem('financeai_mysql_config');
+            
+            if (savedMode) {
+                this.storageMode = savedMode;
+            }
+            
+            if (savedConfig) {
+                try {
+                    this.mysqlConfig = JSON.parse(savedConfig);
+                } catch (error) {
+                    console.error('Erro ao carregar configuração MySQL:', error);
+                    this.mysqlConfig = null;
+                }
+            }
+
+            if (this.storageMode === 'mysql' && this.mysqlConfig) {
+                try {
+                    await this.initializeMySQL();
+                } catch (error) {
+                    console.warn('Falha na inicialização MySQL, usando local:', error);
+                    this.storageMode = 'local';
+                    await this.initializeLocalDB();
+                }
+            } else {
+                await this.initializeLocalDB();
+            }
+            
+            this.isInitialized = true;
+            console.log('Storage manager inicializado:', this.storageMode);
+        } catch (error) {
+            console.error('Erro na inicialização do storage:', error);
+            // Fallback to local storage
+            this.storageMode = 'local';
             await this.initializeLocalDB();
+            this.isInitialized = true;
         }
+    }
+
+    async waitForInitialization() {
+        if (!this.isInitialized && this.initializationPromise) {
+            await this.initializationPromise;
+        }
+        return this.isInitialized;
     }
 
     async initializeLocalDB() {
         if (!this.isIndexedDBSupported) {
             console.log('IndexedDB não suportado, usando localStorage');
+            this.isInitialized = true;
             return;
         }
 
@@ -48,8 +85,9 @@ class StorageManager {
                 const request = indexedDB.open(this.dbName, this.dbVersion);
 
                 request.onerror = () => {
-                    console.error('Erro ao abrir IndexedDB:', request.error);
-                    reject(request.error);
+                    console.warn('Erro ao abrir IndexedDB, usando localStorage:', request.error);
+                    this.db = null;
+                    resolve();
                 };
 
                 request.onsuccess = () => {
@@ -59,39 +97,53 @@ class StorageManager {
                 };
 
                 request.onupgradeneeded = (event) => {
-                    const db = event.target.result;
+                    try {
+                        const db = event.target.result;
 
-                    // Create stores if they don't exist
-                    if (!db.objectStoreNames.contains('bills')) {
-                        const billsStore = db.createObjectStore('bills', { keyPath: 'id' });
-                        billsStore.createIndex('status', 'status', { unique: false });
-                        billsStore.createIndex('dueDate', 'dueDate', { unique: false });
-                        billsStore.createIndex('category', 'category', { unique: false });
+                        // Create stores if they don't exist
+                        if (!db.objectStoreNames.contains('bills')) {
+                            const billsStore = db.createObjectStore('bills', { keyPath: 'id' });
+                            billsStore.createIndex('status', 'status', { unique: false });
+                            billsStore.createIndex('dueDate', 'dueDate', { unique: false });
+                            billsStore.createIndex('category', 'category', { unique: false });
+                        }
+
+                        if (!db.objectStoreNames.contains('invoices')) {
+                            const invoicesStore = db.createObjectStore('invoices', { keyPath: 'id' });
+                            invoicesStore.createIndex('status', 'status', { unique: false });
+                            invoicesStore.createIndex('date', 'date', { unique: false });
+                            invoicesStore.createIndex('supplier', 'supplier', { unique: false });
+                        }
+
+                        if (!db.objectStoreNames.contains('revenues')) {
+                            const revenuesStore = db.createObjectStore('revenues', { keyPath: 'id' });
+                            revenuesStore.createIndex('date', 'date', { unique: false });
+                            revenuesStore.createIndex('category', 'category', { unique: false });
+                            revenuesStore.createIndex('source', 'source', { unique: false });
+                        }
+
+                        if (!db.objectStoreNames.contains('settings')) {
+                            db.createObjectStore('settings', { keyPath: 'key' });
+                        }
+
+                        console.log('IndexedDB estrutura criada/atualizada');
+                    } catch (error) {
+                        console.error('Erro na criação da estrutura IndexedDB:', error);
+                        reject(error);
                     }
-
-                    if (!db.objectStoreNames.contains('invoices')) {
-                        const invoicesStore = db.createObjectStore('invoices', { keyPath: 'id' });
-                        invoicesStore.createIndex('status', 'status', { unique: false });
-                        invoicesStore.createIndex('date', 'date', { unique: false });
-                        invoicesStore.createIndex('supplier', 'supplier', { unique: false });
-                    }
-
-                    if (!db.objectStoreNames.contains('revenues')) {
-                        const revenuesStore = db.createObjectStore('revenues', { keyPath: 'id' });
-                        revenuesStore.createIndex('date', 'date', { unique: false });
-                        revenuesStore.createIndex('category', 'category', { unique: false });
-                        revenuesStore.createIndex('source', 'source', { unique: false });
-                    }
-
-                    if (!db.objectStoreNames.contains('settings')) {
-                        db.createObjectStore('settings', { keyPath: 'key' });
-                    }
-
-                    console.log('IndexedDB estrutura criada/atualizada');
                 };
+
+                // Set timeout for initialization
+                setTimeout(() => {
+                    if (!this.db) {
+                        console.warn('Timeout na inicialização do IndexedDB, usando localStorage');
+                        resolve();
+                    }
+                }, 5000);
             });
         } catch (error) {
             console.error('Erro na inicialização do IndexedDB:', error);
+            this.db = null;
         }
     }
 
@@ -313,34 +365,71 @@ class StorageManager {
 
     async saveData(storeName, data) {
         try {
+            // Ensure initialization is complete
+            await this.waitForInitialization();
+            
+            // Validate inputs
+            if (!storeName || typeof storeName !== 'string') {
+                throw new Error('Nome do store inválido');
+            }
+            
+            if (!Array.isArray(data)) {
+                console.warn('Dados não são um array, convertendo:', data);
+                data = Array.isArray(data) ? data : [];
+            }
+            
             if (this.storageMode === 'mysql') {
                 return await this.saveToMySQL(storeName, data);
             } else {
-                // Try IndexedDB first
+                // Try IndexedDB first, with proper fallback
                 if (this.isIndexedDBSupported && this.db) {
-                    return await this.saveToIndexedDB(storeName, data);
+                    try {
+                        await this.saveToIndexedDB(storeName, data);
+                        return true;
+                    } catch (error) {
+                        console.warn('Erro no IndexedDB, usando localStorage:', error);
+                        return this.saveToLocalStorage(storeName, data);
+                    }
+                } else {
+                    // Use localStorage directly
+                    return this.saveToLocalStorage(storeName, data);
                 }
-                
-                // Fallback to localStorage
-                return this.saveToLocalStorage(storeName, data);
             }
         } catch (error) {
             console.error('Erro ao salvar dados:', error);
-            // Fallback to localStorage on any error
-            return this.saveToLocalStorage(storeName, data);
+            // Emergency fallback to localStorage
+            try {
+                return this.saveToLocalStorage(storeName, data || []);
+            } catch (fallbackError) {
+                console.error('Erro crítico no fallback:', fallbackError);
+                return false;
+            }
         }
     }
 
     async loadData(storeName) {
         try {
+            // Ensure initialization is complete
+            await this.waitForInitialization();
+            
+            // Ensure we have a valid store name
+            if (!storeName || typeof storeName !== 'string') {
+                console.warn('Nome do store inválido:', storeName);
+                return [];
+            }
+            
             if (this.storageMode === 'mysql') {
                 return await this.loadFromMySQL(storeName);
             } else {
-                // Try IndexedDB first
+                // Try IndexedDB first, with proper fallback
                 if (this.isIndexedDBSupported && this.db) {
-                    const data = await this.loadFromIndexedDB(storeName);
-                    if (data && data.length > 0) {
-                        return data;
+                    try {
+                        const data = await this.loadFromIndexedDB(storeName);
+                        if (Array.isArray(data)) {
+                            return data;
+                        }
+                    } catch (error) {
+                        console.warn('Erro no IndexedDB, tentando localStorage:', error);
                     }
                 }
                 
@@ -349,8 +438,13 @@ class StorageManager {
             }
         } catch (error) {
             console.error('Erro ao carregar dados:', error);
-            // Fallback to localStorage on any error
-            return this.loadFromLocalStorage(storeName);
+            // Emergency fallback to localStorage
+            try {
+                return this.loadFromLocalStorage(storeName);
+            } catch (fallbackError) {
+                console.error('Erro crítico no fallback:', fallbackError);
+                return [];
+            }
         }
     }
 
@@ -483,46 +577,75 @@ class StorageManager {
     async saveToIndexedDB(storeName, data) {
         return new Promise((resolve, reject) => {
             try {
+                if (!this.db) {
+                    throw new Error('IndexedDB não inicializado');
+                }
+
                 const transaction = this.db.transaction([storeName], 'readwrite');
                 const store = transaction.objectStore(storeName);
+
+                // Set timeout for transaction
+                const timeoutId = setTimeout(() => {
+                    transaction.abort();
+                    reject(new Error('Timeout na transação IndexedDB'));
+                }, 10000);
+
+                transaction.oncomplete = () => {
+                    clearTimeout(timeoutId);
+                    resolve();
+                };
+
+                transaction.onerror = () => {
+                    clearTimeout(timeoutId);
+                    reject(transaction.error);
+                };
+
+                transaction.onabort = () => {
+                    clearTimeout(timeoutId);
+                    reject(new Error('Transação abortada'));
+                };
 
                 // Clear existing data
                 const clearRequest = store.clear();
                 
                 clearRequest.onsuccess = () => {
                     // Add all new data
-                    let completed = 0;
-                    let total = Array.isArray(data) ? data.length : 1;
-                    
-                    if (total === 0) {
-                        resolve();
-                        return;
+                    if (!Array.isArray(data) || data.length === 0) {
+                        return; // Transaction will complete automatically
                     }
 
-                    const dataArray = Array.isArray(data) ? data : [data];
+                    let completed = 0;
+                    const total = data.length;
                     
-                    dataArray.forEach(item => {
-                        const addRequest = store.add(item);
-                        
-                        addRequest.onsuccess = () => {
-                            completed++;
-                            if (completed === total) {
-                                resolve();
+                    data.forEach(item => {
+                        try {
+                            // Ensure item has required properties
+                            if (!item || typeof item !== 'object' || !item.id) {
+                                console.warn('Item inválido ignorado:', item);
+                                completed++;
+                                return;
                             }
-                        };
-                        
-                        addRequest.onerror = () => {
-                            reject(addRequest.error);
-                        };
+
+                            const addRequest = store.add(item);
+                            
+                            addRequest.onsuccess = () => {
+                                completed++;
+                            };
+                            
+                            addRequest.onerror = () => {
+                                console.warn('Erro ao adicionar item:', addRequest.error);
+                                completed++;
+                            };
+                        } catch (itemError) {
+                            console.warn('Erro no processamento do item:', itemError);
+                            completed++;
+                        }
                     });
                 };
 
                 clearRequest.onerror = () => {
+                    clearTimeout(timeoutId);
                     reject(clearRequest.error);
-                };
-
-                transaction.onerror = () => {
-                    reject(transaction.error);
                 };
             } catch (error) {
                 reject(error);
@@ -533,20 +656,39 @@ class StorageManager {
     async loadFromIndexedDB(storeName) {
         return new Promise((resolve, reject) => {
             try {
+                if (!this.db) {
+                    throw new Error('IndexedDB não inicializado');
+                }
+
                 const transaction = this.db.transaction([storeName], 'readonly');
                 const store = transaction.objectStore(storeName);
                 const request = store.getAll();
 
+                // Set timeout for request
+                const timeoutId = setTimeout(() => {
+                    transaction.abort();
+                    reject(new Error('Timeout na leitura IndexedDB'));
+                }, 10000);
+
                 request.onsuccess = () => {
-                    resolve(request.result || []);
+                    clearTimeout(timeoutId);
+                    const result = request.result || [];
+                    resolve(Array.isArray(result) ? result : []);
                 };
 
                 request.onerror = () => {
+                    clearTimeout(timeoutId);
                     reject(request.error);
                 };
 
                 transaction.onerror = () => {
+                    clearTimeout(timeoutId);
                     reject(transaction.error);
+                };
+
+                transaction.onabort = () => {
+                    clearTimeout(timeoutId);
+                    reject(new Error('Transação abortada'));
                 };
             } catch (error) {
                 reject(error);
@@ -554,75 +696,202 @@ class StorageManager {
         });
     }
 
-    saveToLocalStorage(storeName, data) {
-        try {
-            const key = `financeai_${storeName}`;
-            localStorage.setItem(key, JSON.stringify(data));
-            return true;
-        } catch (error) {
-            console.error('Erro ao salvar no localStorage:', error);
-            return false;
-        }
-    }
-
     loadFromLocalStorage(storeName) {
         try {
             const key = `financeai_${storeName}`;
             const data = localStorage.getItem(key);
-            return data ? JSON.parse(data) : [];
+            
+            if (!data) {
+                return [];
+            }
+            
+            const parsed = JSON.parse(data);
+            
+            // Ensure we always return an array
+            if (!Array.isArray(parsed)) {
+                console.warn('Dados inválidos no localStorage, retornando array vazio');
+                return [];
+            }
+            
+            return parsed;
         } catch (error) {
             console.error('Erro ao carregar do localStorage:', error);
+            // Clear corrupted data
+            try {
+                localStorage.removeItem(`financeai_${storeName}`);
+            } catch (clearError) {
+                console.error('Erro ao limpar dados corrompidos:', clearError);
+            }
             return [];
         }
     }
 
-    async saveSetting(key, value) {
+    saveToLocalStorage(storeName, data) {
         try {
-            const setting = { key, value };
+            const key = `financeai_${storeName}`;
+            const dataToSave = Array.isArray(data) ? data : [];
             
-            if (this.isIndexedDBSupported && this.db) {
-                return new Promise((resolve, reject) => {
-                    const transaction = this.db.transaction(['settings'], 'readwrite');
-                    const store = transaction.objectStore('settings');
-                    const request = store.put(setting);
-
-                    request.onsuccess = () => resolve();
-                    request.onerror = () => reject(request.error);
-                });
-            } else {
-                localStorage.setItem(`financeai_setting_${key}`, JSON.stringify(value));
-                return true;
-            }
+            // Test if we can stringify the data
+            const stringified = JSON.stringify(dataToSave);
+            
+            // Check localStorage quota
+            const testKey = `test_${Date.now()}`;
+            localStorage.setItem(testKey, stringified);
+            localStorage.removeItem(testKey);
+            
+            // If test passed, save actual data
+            localStorage.setItem(key, stringified);
+            return true;
         } catch (error) {
-            console.error('Erro ao salvar configuração:', error);
-            localStorage.setItem(`financeai_setting_${key}`, JSON.stringify(value));
+            console.error('Erro ao salvar no localStorage:', error);
+            
+            if (error.name === 'QuotaExceededError') {
+                console.warn('Cota do localStorage excedida, tentando limpar dados antigos');
+                this.cleanupLocalStorage();
+                
+                // Try again after cleanup
+                try {
+                    localStorage.setItem(`financeai_${storeName}`, JSON.stringify(data || []));
+                    return true;
+                } catch (retryError) {
+                    console.error('Erro mesmo após limpeza:', retryError);
+                }
+            }
+            
+            return false;
+        }
+    }
+
+    cleanupLocalStorage() {
+        try {
+            // Remove old backup data and temporary files
+            const keysToRemove = [];
+            
+            for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                if (key && (key.startsWith('test_') || key.includes('_backup_'))) {
+                    keysToRemove.push(key);
+                }
+            }
+            
+            keysToRemove.forEach(key => {
+                try {
+                    localStorage.removeItem(key);
+                } catch (error) {
+                    console.warn('Erro ao remover chave:', key, error);
+                }
+            });
+            
+            console.log('Limpeza do localStorage concluída');
+        } catch (error) {
+            console.error('Erro na limpeza do localStorage:', error);
         }
     }
 
     async loadSetting(key, defaultValue = null) {
         try {
+            await this.waitForInitialization();
+            
+            if (!key || typeof key !== 'string') {
+                return defaultValue;
+            }
+            
             if (this.isIndexedDBSupported && this.db) {
-                return new Promise((resolve, reject) => {
-                    const transaction = this.db.transaction(['settings'], 'readonly');
-                    const store = transaction.objectStore('settings');
-                    const request = store.get(key);
+                try {
+                    return new Promise((resolve, reject) => {
+                        const transaction = this.db.transaction(['settings'], 'readonly');
+                        const store = transaction.objectStore('settings');
+                        const request = store.get(key);
 
-                    request.onsuccess = () => {
-                        const result = request.result;
-                        resolve(result ? result.value : defaultValue);
-                    };
-                    
-                    request.onerror = () => {
-                        resolve(defaultValue);
-                    };
-                });
+                        const timeoutId = setTimeout(() => {
+                            transaction.abort();
+                            resolve(this.loadSettingFromLocalStorage(key, defaultValue));
+                        }, 5000);
+
+                        request.onsuccess = () => {
+                            clearTimeout(timeoutId);
+                            const result = request.result;
+                            resolve(result ? result.value : defaultValue);
+                        };
+                        
+                        request.onerror = () => {
+                            clearTimeout(timeoutId);
+                            resolve(this.loadSettingFromLocalStorage(key, defaultValue));
+                        };
+
+                        transaction.onerror = () => {
+                            clearTimeout(timeoutId);
+                            resolve(this.loadSettingFromLocalStorage(key, defaultValue));
+                        };
+                    });
+                } catch (error) {
+                    console.warn('Erro ao acessar IndexedDB para settings:', error);
+                    return this.loadSettingFromLocalStorage(key, defaultValue);
+                }
             } else {
-                const data = localStorage.getItem(`financeai_setting_${key}`);
-                return data ? JSON.parse(data) : defaultValue;
+                return this.loadSettingFromLocalStorage(key, defaultValue);
             }
         } catch (error) {
             console.error('Erro ao carregar configuração:', error);
             return defaultValue;
+        }
+    }
+
+    async saveSetting(key, value) {
+        try {
+            await this.waitForInitialization();
+            
+            if (!key || typeof key !== 'string') {
+                throw new Error('Chave da configuração inválida');
+            }
+            
+            if (this.isIndexedDBSupported && this.db) {
+                try {
+                    return new Promise((resolve, reject) => {
+                        const transaction = this.db.transaction(['settings'], 'readwrite');
+                        const store = transaction.objectStore('settings');
+                        const request = store.put({ key, value });
+
+                        const timeoutId = setTimeout(() => {
+                            transaction.abort();
+                            resolve(this.saveSettingToLocalStorage(key, value));
+                        }, 5000);
+
+                        request.onsuccess = () => {
+                            clearTimeout(timeoutId);
+                            resolve(true);
+                        };
+                        
+                        request.onerror = () => {
+                            clearTimeout(timeoutId);
+                            resolve(this.saveSettingToLocalStorage(key, value));
+                        };
+
+                        transaction.onerror = () => {
+                            clearTimeout(timeoutId);
+                            resolve(this.saveSettingToLocalStorage(key, value));
+                        };
+                    });
+                } catch (error) {
+                    console.warn('Erro ao salvar no IndexedDB, usando localStorage:', error);
+                    return this.saveSettingToLocalStorage(key, value);
+                }
+            } else {
+                return this.saveSettingToLocalStorage(key, value);
+            }
+        } catch (error) {
+            console.error('Erro ao salvar configuração:', error);
+            return this.saveSettingToLocalStorage(key, value);
+        }
+    }
+
+    saveSettingToLocalStorage(key, value) {
+        try {
+            localStorage.setItem(`financeai_setting_${key}`, JSON.stringify(value));
+            return true;
+        } catch (error) {
+            console.error('Erro ao salvar setting no localStorage:', error);
+            return false;
         }
     }
 
@@ -674,25 +943,52 @@ class StorageManager {
 
     async clearAllData() {
         try {
+            await this.waitForInitialization();
+            
             if (this.isIndexedDBSupported && this.db) {
                 const storeNames = ['bills', 'invoices', 'revenues'];
                 
                 for (const storeName of storeNames) {
-                    await new Promise((resolve, reject) => {
-                        const transaction = this.db.transaction([storeName], 'readwrite');
-                        const store = transaction.objectStore(storeName);
-                        const request = store.clear();
+                    try {
+                        await new Promise((resolve, reject) => {
+                            const transaction = this.db.transaction([storeName], 'readwrite');
+                            const store = transaction.objectStore(storeName);
+                            const request = store.clear();
 
-                        request.onsuccess = () => resolve();
-                        request.onerror = () => reject(request.error);
-                    });
+                            const timeoutId = setTimeout(() => {
+                                transaction.abort();
+                                reject(new Error('Timeout ao limpar dados'));
+                            }, 10000);
+
+                            request.onsuccess = () => {
+                                clearTimeout(timeoutId);
+                                resolve();
+                            };
+                            
+                            request.onerror = () => {
+                                clearTimeout(timeoutId);
+                                reject(request.error);
+                            };
+
+                            transaction.onerror = () => {
+                                clearTimeout(timeoutId);
+                                reject(transaction.error);
+                            };
+                        });
+                    } catch (error) {
+                        console.warn(`Erro ao limpar ${storeName} do IndexedDB:`, error);
+                    }
                 }
             }
 
-            // Also clear localStorage
-            const keys = ['bills', 'invoices', 'revenues', 'settings'];
+            // Always clear localStorage as backup
+            const keys = ['bills', 'invoices', 'revenues'];
             keys.forEach(key => {
-                localStorage.removeItem(`financeai_${key}`);
+                try {
+                    localStorage.removeItem(`financeai_${key}`);
+                } catch (error) {
+                    console.warn(`Erro ao limpar ${key} do localStorage:`, error);
+                }
             });
 
             return true;
@@ -704,20 +1000,23 @@ class StorageManager {
 
     async getStorageInfo() {
         try {
+            await this.waitForInitialization();
+            
             const bills = await this.loadData('bills');
             const invoices = await this.loadData('invoices');
             const revenues = await this.loadData('revenues');
 
             return {
-                bills: bills.length,
-                invoices: invoices.length,
-                revenues: revenues.length,
+                bills: Array.isArray(bills) ? bills.length : 0,
+                invoices: Array.isArray(invoices) ? invoices.length : 0,
+                revenues: Array.isArray(revenues) ? revenues.length : 0,
                 storageType: this.storageMode === 'mysql' ? 
                     `MySQL (${this.mysqlConfig?.host || 'N/A'})` : 
                     (this.isIndexedDBSupported && this.db ? 'IndexedDB' : 'localStorage'),
                 lastUpdate: new Date().toISOString(),
                 mode: this.storageMode,
-                mysqlConnected: this.isConnectedToMySQL()
+                mysqlConnected: this.isConnectedToMySQL(),
+                initialized: this.isInitialized
             };
         } catch (error) {
             console.error('Erro ao obter informações de armazenamento:', error);
@@ -728,7 +1027,8 @@ class StorageManager {
                 storageType: 'Erro',
                 lastUpdate: new Date().toISOString(),
                 mode: this.storageMode,
-                mysqlConnected: false
+                mysqlConnected: false,
+                initialized: this.isInitialized
             };
         }
     }

@@ -32,6 +32,9 @@ class FinanceAI {
         try {
             this.showLoadingOverlay('Inicializando sistema...');
             
+            // Wait for storage manager to be fully initialized
+            await this.waitForStorageManager();
+            
             await this.loadData();
             this.setupEventListeners();
             this.setupNavigation();
@@ -51,6 +54,30 @@ class FinanceAI {
             console.error('Erro na inicialização:', error);
             this.showToast('Erro ao inicializar o sistema', 'error');
             this.handleError(error, 'Inicialização');
+        }
+    }
+
+    async waitForStorageManager() {
+        // Wait for storage manager to be ready
+        let attempts = 0;
+        const maxAttempts = 20;
+        
+        while (attempts < maxAttempts) {
+            if (this.storageManager && typeof this.storageManager.loadData === 'function') {
+                try {
+                    await this.storageManager.waitForInitialization();
+                    break;
+                } catch (error) {
+                    console.warn('Erro na inicialização do storage manager:', error);
+                }
+            }
+            
+            await new Promise(resolve => setTimeout(resolve, 250));
+            attempts++;
+        }
+        
+        if (!this.storageManager || typeof this.storageManager.loadData !== 'function') {
+            throw new Error('Storage manager não foi inicializado corretamente');
         }
     }
 
@@ -301,63 +328,235 @@ class FinanceAI {
 
     async loadData() {
         try {
-            const [bills, invoices, revenues, settings] = await Promise.all([
+            // Ensure storage manager is ready
+            if (!this.storageManager || typeof this.storageManager.loadData !== 'function') {
+                console.warn('Storage manager não está pronto, inicializando...');
+                this.storageManager = new StorageManager();
+                await this.waitForStorageManager();
+            }
+
+            const [bills, invoices, revenues, settings] = await Promise.allSettled([
                 this.storageManager.loadData('bills'),
                 this.storageManager.loadData('invoices'),
                 this.storageManager.loadData('revenues'),
                 this.loadSettings()
             ]);
 
-            this.bills = Array.isArray(bills) ? bills : [];
-            this.invoices = Array.isArray(invoices) ? invoices : [];
-            this.revenues = Array.isArray(revenues) ? revenues : [];
-            
-            if (settings && typeof settings === 'object') {
-                this.settings = { ...this.settings, ...settings };
+            // Handle bills result
+            if (bills.status === 'fulfilled' && Array.isArray(bills.value)) {
+                this.bills = bills.value;
+            } else {
+                console.warn('Erro ao carregar boletos:', bills.reason);
+                this.bills = [];
             }
 
-            console.log('Dados carregados:', {
+            // Handle invoices result
+            if (invoices.status === 'fulfilled' && Array.isArray(invoices.value)) {
+                this.invoices = invoices.value;
+            } else {
+                console.warn('Erro ao carregar notas fiscais:', invoices.reason);
+                this.invoices = [];
+            }
+
+            // Handle revenues result
+            if (revenues.status === 'fulfilled' && Array.isArray(revenues.value)) {
+                this.revenues = revenues.value;
+            } else {
+                console.warn('Erro ao carregar receitas:', revenues.reason);
+                this.revenues = [];
+            }
+
+            // Handle settings result
+            if (settings.status === 'fulfilled' && settings.value && typeof settings.value === 'object') {
+                this.settings = { ...this.settings, ...settings.value };
+            } else {
+                console.warn('Erro ao carregar configurações:', settings.reason);
+            }
+
+            console.log('Dados carregados com sucesso:', {
                 bills: this.bills.length,
                 invoices: this.invoices.length,
                 revenues: this.revenues.length
             });
+            
+            // Force re-render after successful load
+            setTimeout(() => {
+                if (this.isInitialized) {
+                    this.renderDashboard();
+                    this.renderBills();
+                    this.renderInvoices();
+                    this.renderRevenues();
+                    this.renderNotifications();
+                }
+            }, 100);
+            
         } catch (error) {
-            console.error('Erro ao carregar dados:', error);
+            console.error('Erro crítico ao carregar dados:', error);
             this.bills = [];
             this.invoices = [];
             this.revenues = [];
+            
+            // Show user-friendly error
+            this.showToast('Alguns dados podem não ter sido carregados. Tentando recuperar...', 'warning');
+            
+            // Attempt recovery
+            setTimeout(() => {
+                this.recoverData();
+            }, 2000);
+        }
+    }
+
+    async recoverData() {
+        try {
+            console.log('Tentando recuperar dados...');
+            
+            // Try to recover from localStorage directly
+            const billsBackup = localStorage.getItem('financeai_bills');
+            const invoicesBackup = localStorage.getItem('financeai_invoices');
+            const revenuesBackup = localStorage.getItem('financeai_revenues');
+            
+            if (billsBackup) {
+                try {
+                    const bills = JSON.parse(billsBackup);
+                    if (Array.isArray(bills)) {
+                        this.bills = bills;
+                    }
+                } catch (error) {
+                    console.warn('Erro ao recuperar boletos:', error);
+                }
+            }
+            
+            if (invoicesBackup) {
+                try {
+                    const invoices = JSON.parse(invoicesBackup);
+                    if (Array.isArray(invoices)) {
+                        this.invoices = invoices;
+                    }
+                } catch (error) {
+                    console.warn('Erro ao recuperar notas fiscais:', error);
+                }
+            }
+            
+            if (revenuesBackup) {
+                try {
+                    const revenues = JSON.parse(revenuesBackup);
+                    if (Array.isArray(revenues)) {
+                        this.revenues = revenues;
+                    }
+                } catch (error) {
+                    console.warn('Erro ao recuperar receitas:', error);
+                }
+            }
+            
+            // Re-render with recovered data
+            this.renderDashboard();
+            this.renderBills();
+            this.renderInvoices();
+            this.renderRevenues();
+            
+            const totalRecovered = this.bills.length + this.invoices.length + this.revenues.length;
+            if (totalRecovered > 0) {
+                this.showToast(`${totalRecovered} registros recuperados com sucesso!`, 'success');
+            } else {
+                this.showToast('Nenhum dado foi encontrado para recuperação', 'info');
+            }
+            
+        } catch (error) {
+            console.error('Erro na recuperação de dados:', error);
+            this.showToast('Não foi possível recuperar os dados', 'error');
         }
     }
 
     async saveData() {
         try {
+            if (!this.storageManager || typeof this.storageManager.saveData !== 'function') {
+                console.warn('Storage manager não disponível para salvar dados');
+                // Try to save to localStorage as emergency backup
+                this.saveToLocalStorageBackup();
+                return false;
+            }
+            
             await Promise.all([
-                this.storageManager.saveData('bills', this.bills),
-                this.storageManager.saveData('invoices', this.invoices),
-                this.storageManager.saveData('revenues', this.revenues)
+                this.storageManager.saveData('bills', this.bills || []).catch(error => {
+                    console.warn('Erro ao salvar boletos:', error);
+                    this.saveToLocalStorageBackup('bills', this.bills);
+                }),
+                this.storageManager.saveData('invoices', this.invoices || []).catch(error => {
+                    console.warn('Erro ao salvar notas fiscais:', error);
+                    this.saveToLocalStorageBackup('invoices', this.invoices);
+                }),
+                this.storageManager.saveData('revenues', this.revenues || []).catch(error => {
+                    console.warn('Erro ao salvar receitas:', error);
+                    this.saveToLocalStorageBackup('revenues', this.revenues);
+                })
             ]);
+            
             return true;
         } catch (error) {
             console.error('Erro ao salvar dados:', error);
+            // Emergency backup to localStorage
+            this.saveToLocalStorageBackup();
             throw error;
+        }
+    }
+
+    saveToLocalStorageBackup(type = null, data = null) {
+        try {
+            if (type && data) {
+                localStorage.setItem(`financeai_${type}`, JSON.stringify(data));
+            } else {
+                localStorage.setItem('financeai_bills', JSON.stringify(this.bills || []));
+                localStorage.setItem('financeai_invoices', JSON.stringify(this.invoices || []));
+                localStorage.setItem('financeai_revenues', JSON.stringify(this.revenues || []));
+            }
+            console.log('Backup de emergência salvo no localStorage');
+        } catch (error) {
+            console.error('Erro no backup de emergência:', error);
         }
     }
 
     async loadSettings() {
         try {
+            if (!this.storageManager || typeof this.storageManager.loadSetting !== 'function') {
+                const backup = localStorage.getItem('financeai_setting_userSettings');
+                return backup ? JSON.parse(backup) : {};
+            }
+            
             const savedSettings = await this.storageManager.loadSetting('userSettings');
             return savedSettings || {};
         } catch (error) {
             console.error('Erro ao carregar configurações:', error);
-            return {};
+            // Try localStorage backup
+            try {
+                const backup = localStorage.getItem('financeai_setting_userSettings');
+                return backup ? JSON.parse(backup) : {};
+            } catch (backupError) {
+                console.error('Erro no backup de configurações:', backupError);
+                return {};
+            }
         }
     }
 
     async saveSettings() {
         try {
+            if (!this.storageManager || typeof this.storageManager.saveSetting !== 'function') {
+                console.warn('Storage manager não disponível para salvar configurações');
+                localStorage.setItem('financeai_setting_userSettings', JSON.stringify(this.settings));
+                return;
+            }
+            
             await this.storageManager.saveSetting('userSettings', this.settings);
+            
+            // Also save to localStorage as backup
+            localStorage.setItem('financeai_setting_userSettings', JSON.stringify(this.settings));
         } catch (error) {
             console.error('Erro ao salvar configurações:', error);
+            // Emergency backup
+            try {
+                localStorage.setItem('financeai_setting_userSettings', JSON.stringify(this.settings));
+            } catch (backupError) {
+                console.error('Erro no backup de configurações:', backupError);
+            }
         }
     }
 
@@ -695,12 +894,13 @@ class FinanceAI {
 
     calculateMonthlyTrends() {
         try {
-            const trends = {};
+            const trends = [];
             
             // Get last 6 months
             for (let i = 5; i >= 0; i--) {
                 const date = new Date();
                 date.setMonth(date.getMonth() - i);
+                
                 const monthKey = `${date.getFullYear()}-${date.getMonth()}`;
                 const monthName = date.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
                 
@@ -823,17 +1023,33 @@ class FinanceAI {
                         </div>
                         
                         <div class="report-trends">
-                            <h4>Tendências Mensais</h4>
+                            <h4><i class="fas fa-chart-line"></i> Tendências Mensais</h4>
                             <div class="trends-list">
                                 ${reportData.monthlyTrends.map(trend => `
                                     <div class="trend-item">
-                                        <strong>${trend.name}</strong>
+                                        <strong><i class="fas fa-calendar-alt"></i> ${trend.name}</strong>
                                         <div class="trend-values">
-                                            <span class="trend-revenues">Receitas: R$ ${trend.revenues.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
-                                            <span class="trend-expenses">Despesas: R$ ${trend.expenses.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
-                                            <span class="trend-balance ${trend.balance >= 0 ? 'positive' : 'negative'}">
-                                                Saldo: R$ ${trend.balance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                                            </span>
+                                            <div class="trend-revenues">
+                                                <div style="font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 0.25rem;">RECEITAS</div>
+                                                <div style="font-size: 1.1rem; font-weight: 700; color: var(--success-color);">
+                                                    R$ ${trend.revenues.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                                </div>
+                                            </div>
+                                            <div class="trend-expenses">
+                                                <div style="font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 0.25rem;">DESPESAS</div>
+                                                <div style="font-size: 1.1rem; font-weight: 700; color: var(--danger-color);">
+                                                    R$ ${trend.expenses.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                                </div>
+                                            </div>
+                                            <div class="trend-balance ${trend.balance >= 0 ? 'positive' : 'negative'}">
+                                                <div style="font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 0.25rem;">SALDO</div>
+                                                <div style="font-size: 1.2rem; font-weight: 700;">
+                                                    R$ ${trend.balance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                                </div>
+                                                <div style="font-size: 0.75rem; margin-top: 0.25rem; opacity: 0.8;">
+                                                    ${trend.balance >= 0 ? 'Superávit' : 'Déficit'}
+                                                </div>
+                                            </div>
                                         </div>
                                     </div>
                                 `).join('')}
@@ -1802,7 +2018,124 @@ Relatório gerado automaticamente pelo FinanceAI
             const activityList = document.getElementById('activityList');
             if (!activityList) return;
 
-            // Combine all activities
+            // Initialize activities state if not exists
+            if (!this.activitiesState) {
+                this.activitiesState = {
+                    currentPage: 1,
+                    itemsPerPage: 5,
+                    dateFilter: 'all',
+                    filteredActivities: []
+                };
+            }
+
+            // Generate and filter activities
+            const allActivities = this.generateAllActivities();
+            const filteredActivities = this.filterActivitiesByDate(allActivities, this.activitiesState.dateFilter);
+            this.activitiesState.filteredActivities = filteredActivities;
+
+            // Calculate pagination
+            const totalPages = Math.ceil(filteredActivities.length / this.activitiesState.itemsPerPage);
+            const startIndex = (this.activitiesState.currentPage - 1) * this.activitiesState.itemsPerPage;
+            const endIndex = startIndex + this.activitiesState.itemsPerPage;
+            const currentActivities = filteredActivities.slice(startIndex, endIndex);
+
+            // Update activities container
+            const activitiesContainer = activityList.parentElement;
+            
+            // Add controls if not exists
+            if (!activitiesContainer.querySelector('.activities-controls')) {
+                const controlsHTML = `
+                    <div class="activities-controls">
+                        <div class="activities-filter">
+                            <label for="activitiesDateFilter">Período:</label>
+                            <select id="activitiesDateFilter" onchange="financeAI.onActivitiesDateFilterChange(this.value)">
+                                <option value="all">Todos</option>
+                                <option value="today">Hoje</option>
+                                <option value="week">Esta semana</option>
+                                <option value="month">Este mês</option>
+                                <option value="3months">Últimos 3 meses</option>
+                            </select>
+                        </div>
+                        <div class="activities-pagination">
+                            <button onclick="financeAI.changeActivitiesPage('prev')" id="activitiesPrevBtn">
+                                <i class="fas fa-chevron-left"></i>
+                            </button>
+                            <span class="page-info" id="activitiesPageInfo">1 de 1</span>
+                            <button onclick="financeAI.changeActivitiesPage('next')" id="activitiesNextBtn">
+                                <i class="fas fa-chevron-right"></i>
+                            </button>
+                        </div>
+                    </div>
+                `;
+                activityList.insertAdjacentHTML('beforebegin', controlsHTML);
+            }
+
+            // Update filter value
+            const dateFilter = document.getElementById('activitiesDateFilter');
+            if (dateFilter) {
+                dateFilter.value = this.activitiesState.dateFilter;
+            }
+
+            // Update pagination info and buttons
+            const pageInfo = document.getElementById('activitiesPageInfo');
+            const prevBtn = document.getElementById('activitiesPrevBtn');
+            const nextBtn = document.getElementById('activitiesNextBtn');
+            
+            if (pageInfo) {
+                pageInfo.textContent = `${this.activitiesState.currentPage} de ${Math.max(1, totalPages)}`;
+            }
+            
+            if (prevBtn) {
+                prevBtn.disabled = this.activitiesState.currentPage <= 1;
+            }
+            
+            if (nextBtn) {
+                nextBtn.disabled = this.activitiesState.currentPage >= totalPages;
+            }
+
+            // Render activities
+            if (currentActivities.length === 0) {
+                activityList.innerHTML = `
+                    <div class="activities-empty">
+                        <i class="fas fa-calendar-times"></i>
+                        <p>Nenhuma atividade encontrada</p>
+                        <small>Tente ajustar o filtro de período</small>
+                    </div>
+                `;
+                return;
+            }
+
+            activityList.innerHTML = currentActivities.map(activity => `
+                <div class="activity-item">
+                    <div class="activity-icon" style="background-color: ${activity.color};">
+                        <i class="fas fa-${activity.icon}"></i>
+                    </div>
+                    <div class="activity-content">
+                        <div class="activity-title">${this.escapeHtml(activity.title)}</div>
+                        <div class="activity-time">
+                            <i class="fas fa-clock"></i>
+                            ${this.formatRelativeTime(activity.time)}
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+        } catch (error) {
+            console.error('Erro ao renderizar atividades recentes:', error);
+            const activityList = document.getElementById('activityList');
+            if (activityList) {
+                activityList.innerHTML = `
+                    <div class="activities-empty">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        <p>Erro ao carregar atividades</p>
+                        <small>Tente recarregar a página</small>
+                    </div>
+                `;
+            }
+        }
+    }
+
+    generateAllActivities() {
+        try {
             const activities = [];
 
             // Add bills
@@ -1838,6 +2171,15 @@ Relatório gerado automaticamente pelo FinanceAI
                         color: '#2563eb'
                     });
                 }
+                if (invoice && invoice.receivedAt) {
+                    activities.push({
+                        type: 'invoice-received',
+                        title: `Nota recebida: ${invoice.number}`,
+                        time: invoice.receivedAt,
+                        icon: 'inbox',
+                        color: '#10b981'
+                    });
+                }
             });
 
             // Add revenues
@@ -1853,66 +2195,78 @@ Relatório gerado automaticamente pelo FinanceAI
                 }
             });
 
-            // Sort by time (most recent first) and take last 10
-            activities.sort((a, b) => new Date(b.time) - new Date(a.time));
-            const recentActivities = activities.slice(0, 10);
-
-            if (recentActivities.length === 0) {
-                activityList.innerHTML = `
-                    <div style="text-align: center; color: var(--text-secondary); padding: 2rem;">
-                        <i class="fas fa-history" style="font-size: 2rem; margin-bottom: 1rem; opacity: 0.5;"></i>
-                        <p>Nenhuma atividade recente</p>
-                    </div>
-                `;
-                return;
-            }
-
-            activityList.innerHTML = recentActivities.map(activity => `
-                <div class="activity-item">
-                    <div class="activity-icon" style="background-color: ${activity.color};">
-                        <i class="fas fa-${activity.icon}"></i>
-                    </div>
-                    <div class="activity-content">
-                        <div class="activity-title">${this.escapeHtml(activity.title)}</div>
-                        <div class="activity-time">${this.formatRelativeTime(activity.time)}</div>
-                    </div>
-                </div>
-            `).join('');
+            // Sort by time (most recent first)
+            return activities.sort((a, b) => new Date(b.time) - new Date(a.time));
         } catch (error) {
-            console.error('Erro ao renderizar atividades recentes:', error);
+            console.error('Erro ao gerar atividades:', error);
+            return [];
         }
     }
 
-    formatRelativeTime(dateString) {
+    filterActivitiesByDate(activities, filter) {
         try {
-            const date = new Date(dateString);
-            const now = new Date();
-            const diffMs = now - date;
-            const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-            const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-            const diffMinutes = Math.floor(diffMs / (1000 * 60));
-
-            if (diffDays > 0) {
-                return `${diffDays} dia${diffDays > 1 ? 's' : ''} atrás`;
-            } else if (diffHours > 0) {
-                return `${diffHours} hora${diffHours > 1 ? 's' : ''} atrás`;
-            } else if (diffMinutes > 0) {
-                return `${diffMinutes} minuto${diffMinutes > 1 ? 's' : ''} atrás`;
-            } else {
-                return 'Agora mesmo';
+            if (filter === 'all') {
+                return activities;
             }
+
+            const now = new Date();
+            const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+            const startOfWeek = new Date(startOfDay.getTime() - (startOfDay.getDay() * 24 * 60 * 60 * 1000));
+            const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+            const startOf3Months = new Date(now.getFullYear(), now.getMonth() - 3, 1);
+
+            return activities.filter(activity => {
+                const activityDate = new Date(activity.time);
+                
+                switch (filter) {
+                    case 'today':
+                        return activityDate >= startOfDay;
+                    case 'week':
+                        return activityDate >= startOfWeek;
+                    case 'month':
+                        return activityDate >= startOfMonth;
+                    case '3months':
+                        return activityDate >= startOf3Months;
+                    default:
+                        return true;
+                }
+            });
         } catch (error) {
-            return 'Data inválida';
+            console.error('Erro ao filtrar atividades por data:', error);
+            return activities;
+        }
+    }
+
+    onActivitiesDateFilterChange(value) {
+        try {
+            this.activitiesState.dateFilter = value;
+            this.activitiesState.currentPage = 1; // Reset to first page
+            this.renderRecentActivities();
+        } catch (error) {
+            console.error('Erro ao alterar filtro de data:', error);
+        }
+    }
+
+    changeActivitiesPage(direction) {
+        try {
+            const totalPages = Math.ceil(this.activitiesState.filteredActivities.length / this.activitiesState.itemsPerPage);
+            
+            if (direction === 'prev' && this.activitiesState.currentPage > 1) {
+                this.activitiesState.currentPage--;
+            } else if (direction === 'next' && this.activitiesState.currentPage < totalPages) {
+                this.activitiesState.currentPage++;
+            }
+            
+            this.renderRecentActivities();
+        } catch (error) {
+            console.error('Erro ao alterar página de atividades:', error);
         }
     }
 
     renderBills() {
         try {
             const billsList = document.getElementById('billsList');
-            if (!billsList) {
-                console.warn('Elemento billsList não encontrado');
-                return;
-            }
+            if (!billsList) return;
 
             if (!Array.isArray(this.bills) || this.bills.length === 0) {
                 billsList.innerHTML = `
@@ -2042,6 +2396,7 @@ Relatório gerado automaticamente pelo FinanceAI
             
             // Add summary info
             this.addBillsSummary(filteredBills);
+            
         } catch (error) {
             console.error('Erro ao renderizar boletos:', error);
             const billsList = document.getElementById('billsList');
@@ -2079,23 +2434,39 @@ Relatório gerado automaticamente pelo FinanceAI
             const totalPaid = paidBills.reduce((sum, bill) => sum + bill.amount, 0);
 
             const summaryDiv = document.createElement('div');
-            summaryDiv.className = 'bills-summary financial-summary';
+            summaryDiv.className = 'bills-summary';
             summaryDiv.innerHTML = `
                 <div class="summary-card neutral">
+                    <div class="summary-icon">
+                        <i class="fas fa-file-invoice"></i>
+                    </div>
                     <div class="summary-value">${bills.length}</div>
                     <div class="summary-label">Total de Boletos</div>
+                    <div class="summary-sublabel">Documentos cadastrados</div>
                 </div>
                 <div class="summary-card ${totalPending > 0 ? 'negative' : 'neutral'}">
+                    <div class="summary-icon">
+                        <i class="fas fa-clock"></i>
+                    </div>
                     <div class="summary-value">R$ ${totalPending.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</div>
-                    <div class="summary-label">Pendentes (${pendingBills.length})</div>
+                    <div class="summary-label">Pendentes</div>
+                    <div class="summary-sublabel">${pendingBills.length} boletos aguardando</div>
                 </div>
                 <div class="summary-card ${totalOverdue > 0 ? 'negative' : 'neutral'}">
+                    <div class="summary-icon">
+                        <i class="fas fa-exclamation-triangle"></i>
+                    </div>
                     <div class="summary-value">R$ ${totalOverdue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</div>
-                    <div class="summary-label">Vencidos (${overdueBills.length})</div>
+                    <div class="summary-label">Vencidos</div>
+                    <div class="summary-sublabel">${overdueBills.length} boletos em atraso</div>
                 </div>
                 <div class="summary-card ${totalPaid > 0 ? 'positive' : 'neutral'}">
+                    <div class="summary-icon">
+                        <i class="fas fa-check-circle"></i>
+                    </div>
                     <div class="summary-value">R$ ${totalPaid.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</div>
-                    <div class="summary-label">Pagos (${paidBills.length})</div>
+                    <div class="summary-label">Pagos</div>
+                    <div class="summary-sublabel">${paidBills.length} boletos quitados</div>
                 </div>
             `;
 
@@ -2305,6 +2676,35 @@ Relatório gerado automaticamente pelo FinanceAI
         }
     }
 
+    formatRelativeTime(timestamp) {
+        try {
+            if (!timestamp) return 'Data inválida';
+            
+            const date = new Date(timestamp);
+            if (isNaN(date.getTime())) return 'Data inválida';
+            
+            const now = new Date();
+            const diffInSeconds = Math.floor((now - date) / 1000);
+            
+            if (diffInSeconds < 60) {
+                return 'Agora mesmo';
+            } else if (diffInSeconds < 3600) {
+                const minutes = Math.floor(diffInSeconds / 60);
+                return `${minutes} minuto${minutes > 1 ? 's' : ''} atrás`;
+            } else if (diffInSeconds < 86400) {
+                const hours = Math.floor(diffInSeconds / 3600);
+                return `${hours} hora${hours > 1 ? 's' : ''} atrás`;
+            } else if (diffInSeconds < 2592000) {
+                const days = Math.floor(diffInSeconds / 86400);
+                return `${days} dia${days > 1 ? 's' : ''} atrás`;
+            } else {
+                return date.toLocaleDateString('pt-BR');
+            }
+        } catch (error) {
+            return 'Data inválida';
+        }
+    }
+
     addBillFilters() {
         try {
             const filters = document.getElementById('billsFilters');
@@ -2400,11 +2800,14 @@ Relatório gerado automaticamente pelo FinanceAI
             invoicesList.innerHTML = sortedInvoices.map(invoice => {
                 if (!this.validateInvoiceData(invoice)) return '';
                 
+                const isReceived = invoice.status === 'received';
+                const isPending = invoice.status === 'pending';
+                
                 return `
-                    <div class="invoice-item ${this.settings.compactView ? 'compact' : ''}" data-invoice-id="${invoice.id}">
+                    <div class="invoice-item ${this.settings.compactView ? 'compact' : ''} ${isReceived ? 'received' : ''}" data-invoice-id="${invoice.id}">
                         <div class="item-header">
-                            <h3 class="item-title">NF ${this.escapeHtml(invoice.number)}</h3>
-                            <span class="item-status status-${invoice.status || 'received'}">
+                            <h3 class="item-title ${isReceived ? 'text-success' : ''}">${invoice.number ? 'NF ' + this.escapeHtml(invoice.number) : 'Nota Fiscal'}</h3>
+                            <span class="item-status status-${invoice.status || 'pending'}">
                                 ${invoice.status === 'received' ? 'Recebida' : 'Pendente'}
                             </span>
                         </div>
@@ -2416,7 +2819,7 @@ Relatório gerado automaticamente pelo FinanceAI
                                 </div>
                                 <div class="detail-item">
                                     <span class="detail-label">Valor</span>
-                                    <span class="detail-value amount">R$ ${invoice.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                                    <span class="detail-value amount ${isReceived ? 'text-success' : ''}">R$ ${invoice.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                                 </div>
                                 <div class="detail-item">
                                     <span class="detail-label">Data</span>
@@ -2426,20 +2829,41 @@ Relatório gerado automaticamente pelo FinanceAI
                                     <span class="detail-label">Categoria</span>
                                     <span class="detail-value">${this.getCategoryText(invoice.category)}</span>
                                 </div>
+                                ${isReceived && invoice.receivedAt ? `
+                                    <div class="detail-item">
+                                        <span class="detail-label">Recebida em</span>
+                                        <span class="detail-value text-success">${this.formatDate(invoice.receivedAt)}</span>
+                                    </div>
+                                ` : ''}
                             </div>
                         ` : `
                             <div class="compact-details">
-                                <span class="compact-amount">R$ ${invoice.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                                <span class="compact-amount ${isReceived ? 'text-success' : ''}">R$ ${invoice.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                                 <span class="compact-date">${this.formatDate(invoice.date)}</span>
                             </div>
                         `}
                         <div class="item-actions">
-                            <button class="btn-sm btn-warning" onclick="financeAI.editInvoice('${invoice.id}')">
-                                <i class="fas fa-edit"></i> Editar
-                            </button>
-                            <button class="btn-sm btn-danger" onclick="financeAI.deleteInvoice('${invoice.id}')">
-                                <i class="fas fa-trash"></i> Excluir
-                            </button>
+                            ${isPending ? `
+                                <button class="btn-sm btn-success" onclick="financeAI.markInvoiceAsReceived('${invoice.id}')">
+                                    <i class="fas fa-check"></i> Receber
+                                </button>
+                                <button class="btn-sm btn-warning" onclick="financeAI.editInvoice('${invoice.id}')">
+                                    <i class="fas fa-edit"></i> Editar
+                                </button>
+                                <button class="btn-sm btn-danger" onclick="financeAI.deleteInvoice('${invoice.id}')">
+                                    <i class="fas fa-trash"></i> Excluir
+                                </button>
+                            ` : `
+                                <span class="text-success" style="font-size: 0.875rem; font-weight: 500;">
+                                    <i class="fas fa-check-circle"></i> Nota fiscal recebida
+                                </span>
+                                <button class="btn-sm btn-warning" onclick="financeAI.editInvoice('${invoice.id}')">
+                                    <i class="fas fa-edit"></i> Editar
+                                </button>
+                                <button class="btn-sm btn-danger" onclick="financeAI.deleteInvoice('${invoice.id}')">
+                                    <i class="fas fa-trash"></i> Excluir
+                                </button>
+                            `}
                         </div>
                     </div>
                 `;
@@ -2459,6 +2883,34 @@ Relatório gerado automaticamente pelo FinanceAI
                     </div>
                 `;
             }
+        }
+    }
+
+    async markInvoiceAsReceived(invoiceId) {
+        try {
+            const invoice = this.invoices.find(i => i.id == invoiceId);
+            if (!invoice) {
+                this.showToast('Nota fiscal não encontrada', 'error');
+                return;
+            }
+            
+            if (invoice.status === 'received') {
+                this.showToast('Nota fiscal já está marcada como recebida', 'warning');
+                return;
+            }
+            
+            invoice.status = 'received';
+            invoice.receivedAt = new Date().toISOString();
+            invoice.updatedAt = new Date().toISOString();
+            
+            await this.saveData();
+            this.renderInvoices();
+            this.renderDashboard();
+            this.showToast(`Nota fiscal "${invoice.number}" marcada como recebida!`, 'success');
+            
+        } catch (error) {
+            console.error('Erro ao marcar nota fiscal como recebida:', error);
+            this.showToast('Erro ao marcar nota fiscal como recebida', 'error');
         }
     }
 
@@ -3024,12 +3476,14 @@ function openAddRevenueModal() {
             // Reset form if not editing
             if (!window.financeAI?.editingRevenueId) {
                 const form = document.getElementById('addRevenueForm');
-                if (form) form.reset();
-                
-                // Set default date to today
-                const dateInput = document.getElementById('revenueDate');
-                if (dateInput) {
-                    dateInput.value = new Date().toISOString().split('T')[0];
+                if (form) {
+                    form.reset();
+                    
+                    // Set default date to today
+                    const dateInput = document.getElementById('revenueDate');
+                    if (dateInput) {
+                        dateInput.value = new Date().toISOString().split('T')[0];
+                    }
                 }
             }
             
