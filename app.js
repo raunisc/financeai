@@ -1,1944 +1,1453 @@
-class FinanceAI {
+class FinanceManager {
     constructor() {
-        this.bills = [];
-        this.invoices = [];
-        this.revenues = [];
-        this.notifications = [];
-        this.settings = {
-            emailEnabled: true,
-            emailAddress: '',
-            reminderDays: 3,
-            aiProcessing: true,
-            smartCategorization: true,
-            duplicateDetection: true,
-            autoBackup: true,
-            defaultReportPeriod: 90,
-            showPaidBills: true,
-            compactView: false
+        this.data = {
+            income: JSON.parse(localStorage.getItem('income') || '[]'),
+            expenses: JSON.parse(localStorage.getItem('expenses') || '[]'),
+            bills: JSON.parse(localStorage.getItem('bills') || '[]'),
+            cards: JSON.parse(localStorage.getItem('cards') || '[]')
         };
         
-        this.aiEngine = new AIEngine();
-        this.emailIntegration = new EmailIntegration();
-        this.fileProcessor = new FileProcessor();
-        this.storageManager = new StorageManager();
-        this.isInitialized = false;
-        this.loadingOverlay = null;
-        this.performanceMetrics = {};
-        
+        this.charts = {};
+        this.db = null;
+        this.currentTransactionPage = 0;
+        this.transactionsPerPage = 4;
+        this.isLoading = false;
+        this.loadingStates = new Set();
+        this.validationRules = this.initValidationRules();
+        this.retryAttempts = 0;
+        this.maxRetryAttempts = 3;
         this.init();
     }
 
-    async init() {
-        try {
-            this.showLoadingOverlay('Inicializando sistema...');
-            
-            // Wait for storage manager to be fully initialized
-            await this.waitForStorageManager();
-            
-            await this.loadData();
-            this.setupEventListeners();
-            this.setupNavigation();
-            this.renderDashboard();
-            this.scheduleNotifications();
-            this.loadDatabaseSettings();
-            this.enableAutoSave();
-            this.setupPerformanceMonitoring();
-            this.verifyDataIntegrityPeriodically();
-            
-            this.hideLoadingOverlay();
-            this.isInitialized = true;
-            
-            this.showToast('Sistema inicializado com sucesso!', 'success');
-        } catch (error) {
-            this.hideLoadingOverlay();
-            console.error('Erro na inicialização:', error);
-            this.showToast('Erro ao inicializar o sistema', 'error');
-            this.handleError(error, 'Inicialização');
-        }
-    }
-
-    async waitForStorageManager() {
-        // Wait for storage manager to be ready
-        let attempts = 0;
-        const maxAttempts = 20;
-        
-        while (attempts < maxAttempts) {
-            if (this.storageManager && typeof this.storageManager.loadData === 'function') {
-                try {
-                    await this.storageManager.waitForInitialization();
-                    break;
-                } catch (error) {
-                    console.warn('Erro na inicialização do storage manager:', error);
-                }
-            }
-            
-            await new Promise(resolve => setTimeout(resolve, 250));
-            attempts++;
-        }
-        
-        if (!this.storageManager || typeof this.storageManager.loadData !== 'function') {
-            throw new Error('Storage manager não foi inicializado corretamente');
-        }
-    }
-
-    showLoadingOverlay(message = 'Carregando...') {
-        try {
-            if (this.loadingOverlay) {
-                this.hideLoadingOverlay();
-            }
-            
-            this.loadingOverlay = document.createElement('div');
-            this.loadingOverlay.className = 'loading-overlay';
-            this.loadingOverlay.innerHTML = `
-                <div style="text-align: center;">
-                    <div class="loading-spinner"></div>
-                    <p style="margin-top: 1rem; color: var(--text-primary); font-weight: 500;">${message}</p>
-                </div>
-            `;
-            
-            document.body.appendChild(this.loadingOverlay);
-            
-            // Force reflow then show
-            this.loadingOverlay.offsetHeight;
-            this.loadingOverlay.classList.add('show');
-        } catch (error) {
-            console.error('Erro ao mostrar loading overlay:', error);
-        }
-    }
-
-    hideLoadingOverlay() {
-        try {
-            if (this.loadingOverlay) {
-                this.loadingOverlay.classList.remove('show');
-                setTimeout(() => {
-                    if (this.loadingOverlay && this.loadingOverlay.parentNode) {
-                        this.loadingOverlay.parentNode.removeChild(this.loadingOverlay);
-                    }
-                    this.loadingOverlay = null;
-                }, 300);
-            }
-        } catch (error) {
-            console.error('Erro ao esconder loading overlay:', error);
-        }
-    }
-
-    showToast(message, type = 'info', duration = 4000) {
-        try {
-            // Remove existing toasts
-            const existingToasts = document.querySelectorAll('.toast');
-            existingToasts.forEach(toast => toast.remove());
-
-            const toast = document.createElement('div');
-            toast.className = `toast toast-${type}`;
-            toast.innerHTML = `
-                <div style="display: flex; align-items: center; gap: 0.75rem;">
-                    <i class="fas fa-${this.getToastIcon(type)}"></i>
-                    <span>${this.escapeHtml(message)}</span>
-                </div>
-            `;
-
-            document.body.appendChild(toast);
-
-            // Auto remove after duration
-            setTimeout(() => {
-                if (toast.parentNode) {
-                    toast.style.opacity = '0';
-                    toast.style.transform = 'translateX(100%)';
-                    setTimeout(() => {
-                        if (toast.parentNode) {
-                            toast.parentNode.removeChild(toast);
-                        }
-                    }, 300);
-                }
-            }, duration);
-
-            // Click to dismiss
-            toast.addEventListener('click', () => {
-                if (toast.parentNode) {
-                    toast.style.opacity = '0';
-                    toast.style.transform = 'translateX(100%)';
-                    setTimeout(() => {
-                        if (toast.parentNode) {
-                            toast.parentNode.removeChild(toast);
-                        }
-                    }, 300);
-                }
-            });
-        } catch (error) {
-            console.error('Erro ao mostrar toast:', error);
-        }
-    }
-
-    getToastIcon(type) {
-        const icons = {
-            'success': 'check-circle',
-            'error': 'exclamation-circle',
-            'warning': 'exclamation-triangle',
-            'info': 'info-circle'
+    initValidationRules() {
+        return {
+            required: (value) => value !== null && value !== undefined && value !== '',
+            number: (value) => !isNaN(value) && value > 0,
+            date: (value) => !isNaN(new Date(value).getTime()),
+            maxLength: (value, max) => value.length <= max,
+            email: (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
         };
-        return icons[type] || 'info-circle';
     }
 
-    escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
+    validateField(value, rules) {
+        const errors = [];
+        
+        if (rules.required && !this.validationRules.required(value)) {
+            errors.push('Este campo é obrigatório');
+        }
+        
+        if (rules.number && value !== '' && !this.validationRules.number(value)) {
+            errors.push('Deve ser um número válido maior que zero');
+        }
+        
+        if (rules.date && value !== '' && !this.validationRules.date(value)) {
+            errors.push('Data inválida');
+        }
+        
+        if (rules.maxLength && value.length > rules.maxLength) {
+            errors.push(`Máximo ${rules.maxLength} caracteres`);
+        }
+        
+        return errors;
     }
 
-    handleError(error, context = '') {
-        try {
-            console.error(`Erro em ${context}:`, error);
-            
-            // Log to performance metrics if available
-            if (this.performanceMetrics) {
-                if (!this.performanceMetrics.errors) {
-                    this.performanceMetrics.errors = [];
-                }
-                this.performanceMetrics.errors.push({
-                    context,
-                    message: error.message,
-                    timestamp: new Date().toISOString()
-                });
-                
-                // Keep only last 50 errors
-                if (this.performanceMetrics.errors.length > 50) {
-                    this.performanceMetrics.errors = this.performanceMetrics.errors.slice(-50);
-                }
-            }
-        } catch (err) {
-            console.error('Erro no manipulador de erro:', err);
+    showFieldError(fieldId, errors) {
+        const field = document.getElementById(fieldId);
+        if (!field) return;
+        
+        const existingError = field.parentElement.querySelector('.field-error');
+        if (existingError) {
+            existingError.remove();
+        }
+        
+        if (errors.length > 0) {
+            field.classList.add('error');
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'field-error';
+            errorDiv.textContent = errors[0];
+            field.parentElement.appendChild(errorDiv);
+        } else {
+            field.classList.remove('error');
         }
     }
 
-    async measureAsyncPerformance(name, asyncFunction) {
-        const start = performance.now();
-        try {
-            const result = await asyncFunction();
-            const end = performance.now();
-            
-            if (!this.performanceMetrics.operations) {
-                this.performanceMetrics.operations = {};
-            }
-            
-            this.performanceMetrics.operations[name] = {
-                duration: Math.round(end - start),
-                timestamp: new Date().toISOString(),
-                success: true
-            };
-            
-            return result;
-        } catch (error) {
-            const end = performance.now();
-            
-            if (!this.performanceMetrics.operations) {
-                this.performanceMetrics.operations = {};
-            }
-            
-            this.performanceMetrics.operations[name] = {
-                duration: Math.round(end - start),
-                timestamp: new Date().toISOString(),
-                success: false,
-                error: error.message
-            };
-            
-            throw error;
+    clearFieldErrors(formId) {
+        const form = document.getElementById(formId);
+        if (!form) return;
+        
+        form.querySelectorAll('.field-error').forEach(error => error.remove());
+        form.querySelectorAll('.error').forEach(field => field.classList.remove('error'));
+    }
+
+    showLoading(elementId) {
+        this.loadingStates.add(elementId);
+        const element = document.getElementById(elementId);
+        if (element) {
+            element.style.opacity = '0.6';
+            element.style.pointerEvents = 'none';
         }
     }
 
-    async verifyDataIntegrity() {
-        try {
-            const issues = [];
-            
-            // Check bills integrity
-            if (Array.isArray(this.bills)) {
-                this.bills.forEach((bill, index) => {
-                    if (!this.validateBillData(bill)) {
-                        issues.push(`Bill at index ${index} has invalid data`);
-                    }
-                });
-            }
-            
-            // Check invoices integrity
-            if (Array.isArray(this.invoices)) {
-                this.invoices.forEach((invoice, index) => {
-                    if (!this.validateInvoiceData(invoice)) {
-                        issues.push(`Invoice at index ${index} has invalid data`);
-                    }
-                });
-            }
-            
-            // Check revenues integrity
-            if (Array.isArray(this.revenues)) {
-                this.revenues.forEach((revenue, index) => {
-                    if (!this.validateRevenueData(revenue)) {
-                        issues.push(`Revenue at index ${index} has invalid data`);
-                    }
-                });
-            }
-            
-            return {
-                isValid: issues.length === 0,
-                issues: issues
-            };
-        } catch (error) {
-            return {
-                isValid: false,
-                issues: [`Integrity check failed: ${error.message}`]
-            };
+    hideLoading(elementId) {
+        this.loadingStates.delete(elementId);
+        const element = document.getElementById(elementId);
+        if (element) {
+            element.style.opacity = '1';
+            element.style.pointerEvents = 'auto';
         }
     }
 
-    validateBillData(bill) {
-        try {
-            return bill && 
-                   typeof bill.id !== 'undefined' &&
-                   typeof bill.name === 'string' && bill.name.trim() !== '' &&
-                   typeof bill.amount === 'number' && bill.amount >= 0 &&
-                   typeof bill.dueDate === 'string' && !isNaN(new Date(bill.dueDate).getTime()) &&
-                   ['pending', 'paid', 'overdue'].includes(bill.status);
-        } catch (error) {
-            return false;
-        }
-    }
-
-    validateInvoiceData(invoice) {
-        try {
-            return invoice && 
-                   typeof invoice.id !== 'undefined' &&
-                   typeof invoice.number === 'string' && invoice.number.trim() !== '' &&
-                   typeof invoice.supplier === 'string' && invoice.supplier.trim() !== '' &&
-                   typeof invoice.amount === 'number' && invoice.amount >= 0 &&
-                   typeof invoice.date === 'string' && !isNaN(new Date(invoice.date).getTime());
-        } catch (error) {
-            return false;
-        }
-    }
-
-    validateRevenueData(revenue) {
-        try {
-            return revenue && 
-                   typeof revenue.id !== 'undefined' &&
-                   typeof revenue.description === 'string' && revenue.description.trim() !== '' &&
-                   typeof revenue.amount === 'number' && revenue.amount >= 0 &&
-                   typeof revenue.date === 'string' && !isNaN(new Date(revenue.date).getTime());
-        } catch (error) {
-            return false;
-        }
-    }
-
-    async loadData() {
-        try {
-            // Ensure storage manager is ready
-            if (!this.storageManager || typeof this.storageManager.loadData !== 'function') {
-                console.warn('Storage manager não está pronto, inicializando...');
-                this.storageManager = new StorageManager();
-                await this.waitForStorageManager();
-            }
-
-            const [bills, invoices, revenues, settings] = await Promise.allSettled([
-                this.storageManager.loadData('bills'),
-                this.storageManager.loadData('invoices'),
-                this.storageManager.loadData('revenues'),
-                this.loadSettings()
-            ]);
-
-            // Handle bills result
-            if (bills.status === 'fulfilled' && Array.isArray(bills.value)) {
-                this.bills = bills.value;
-            } else {
-                console.warn('Erro ao carregar boletos:', bills.reason);
-                this.bills = [];
-            }
-
-            // Handle invoices result
-            if (invoices.status === 'fulfilled' && Array.isArray(invoices.value)) {
-                this.invoices = invoices.value;
-            } else {
-                console.warn('Erro ao carregar notas fiscais:', invoices.reason);
-                this.invoices = [];
-            }
-
-            // Handle revenues result
-            if (revenues.status === 'fulfilled' && Array.isArray(revenues.value)) {
-                this.revenues = revenues.value;
-            } else {
-                console.warn('Erro ao carregar receitas:', revenues.reason);
-                this.revenues = [];
-            }
-
-            // Handle settings result
-            if (settings.status === 'fulfilled' && settings.value && typeof settings.value === 'object') {
-                this.settings = { ...this.settings, ...settings.value };
-            } else {
-                console.warn('Erro ao carregar configurações:', settings.reason);
-            }
-
-            console.log('Dados carregados com sucesso:', {
-                bills: this.bills.length,
-                invoices: this.invoices.length,
-                revenues: this.revenues.length
-            });
-            
-            // Force re-render after successful load
+    showToast(message, type = 'success') {
+        const toast = document.createElement('div');
+        toast.className = `toast toast-${type}`;
+        
+        const iconMap = {
+            success: 'check-circle',
+            error: 'exclamation-triangle',
+            warning: 'exclamation-circle',
+            info: 'info-circle'
+        };
+        
+        toast.innerHTML = `
+            <div class="toast-content">
+                <i class="fas fa-${iconMap[type] || 'info-circle'}"></i>
+                <span>${message}</span>
+            </div>
+        `;
+        
+        document.body.appendChild(toast);
+        
+        // Show toast with animation
+        requestAnimationFrame(() => {
+            toast.classList.add('show');
+        });
+        
+        // Auto-hide toast
+        setTimeout(() => {
+            toast.classList.remove('show');
             setTimeout(() => {
-                if (this.isInitialized) {
-                    this.renderDashboard();
-                    this.renderBills();
-                    this.renderInvoices();
-                    this.renderRevenues();
-                    this.renderNotifications();
+                if (toast.parentNode) {
+                    toast.parentNode.removeChild(toast);
                 }
-            }, 100);
-            
-        } catch (error) {
-            console.error('Erro crítico ao carregar dados:', error);
-            this.bills = [];
-            this.invoices = [];
-            this.revenues = [];
-            
-            // Show user-friendly error
-            this.showToast('Alguns dados podem não ter sido carregados. Tentando recuperar...', 'warning');
-            
-            // Attempt recovery
+            }, 300);
+        }, type === 'error' ? 5000 : 3000);
+        
+        // Allow manual dismissal
+        toast.addEventListener('click', () => {
+            toast.classList.remove('show');
             setTimeout(() => {
-                this.recoverData();
-            }, 2000);
+                if (toast.parentNode) {
+                    toast.parentNode.removeChild(toast);
+                }
+            }, 300);
+        });
+    }
+
+    debounce(func, wait) {
+        let timeout;
+        return function executedFunction(...args) {
+            const later = () => {
+                clearTimeout(timeout);
+                func(...args);
+            };
+            clearTimeout(timeout);
+            timeout = setTimeout(later, wait);
+        };
+    }
+    
+    init() {
+        try {
+            this.initDatabase();
+            this.setupNavigation();
+            this.setupModals();
+            this.setupForms();
+            this.setupFilters();
+            this.setupBackupSystem();
+            this.setupKeyboardShortcuts();
+            this.setupMobileMenu();
+            this.setupErrorHandling();
+            this.loadDashboard();
+            this.updateAllTables();
+            this.generateInsights();
+            this.populateFilters();
+            this.setupResponsiveHandlers();
+            this.setupAccessibility();
+            this.showToast('Sistema inicializado com sucesso!');
+        } catch (error) {
+            console.error('Erro na inicialização:', error);
+            this.handleInitializationError(error);
         }
     }
 
-    async recoverData() {
-        try {
-            console.log('Tentando recuperar dados...');
+    setupKeyboardShortcuts() {
+        document.addEventListener('keydown', (e) => {
+            if (e.ctrlKey || e.metaKey) {
+                switch (e.key) {
+                    case 'i':
+                        e.preventDefault();
+                        this.openIncomeModal();
+                        break;
+                    case 'e':
+                        e.preventDefault();
+                        this.openExpenseModal();
+                        break;
+                    case 'b':
+                        e.preventDefault();
+                        this.openBillModal();
+                        break;
+                    case 'c':
+                        e.preventDefault();
+                        this.openCardModal();
+                        break;
+                    case 's':
+                        e.preventDefault();
+                        this.exportData();
+                        break;
+                }
+            }
             
-            // Try to recover from localStorage directly
-            const billsBackup = localStorage.getItem('financeai_bills');
-            const invoicesBackup = localStorage.getItem('financeai_invoices');
-            const revenuesBackup = localStorage.getItem('financeai_revenues');
-            
-            if (billsBackup) {
-                try {
-                    const bills = JSON.parse(billsBackup);
-                    if (Array.isArray(bills)) {
-                        this.bills = bills;
+            if (e.key === 'Escape') {
+                this.closeAllModals();
+            }
+        });
+    }
+
+    setupResponsiveHandlers() {
+        let resizeTimeout;
+        window.addEventListener('resize', () => {
+            clearTimeout(resizeTimeout);
+            resizeTimeout = setTimeout(() => {
+                this.handleResize();
+            }, 250);
+        });
+    }
+
+    handleResize() {
+        // Redraw charts on resize with debouncing
+        if (this.resizeTimeout) {
+            clearTimeout(this.resizeTimeout);
+        }
+        
+        this.resizeTimeout = setTimeout(() => {
+            Object.values(this.charts).forEach(chart => {
+                if (chart && typeof chart.resize === 'function') {
+                    try {
+                        chart.resize();
+                    } catch (error) {
+                        console.error('Error resizing chart:', error);
                     }
-                } catch (error) {
-                    console.warn('Erro ao recuperar boletos:', error);
-                }
-            }
-            
-            if (invoicesBackup) {
-                try {
-                    const invoices = JSON.parse(invoicesBackup);
-                    if (Array.isArray(invoices)) {
-                        this.invoices = invoices;
-                    }
-                } catch (error) {
-                    console.warn('Erro ao recuperar notas fiscais:', error);
-                }
-            }
-            
-            if (revenuesBackup) {
-                try {
-                    const revenues = JSON.parse(revenuesBackup);
-                    if (Array.isArray(revenues)) {
-                        this.revenues = revenues;
-                    }
-                } catch (error) {
-                    console.warn('Erro ao recuperar receitas:', error);
-                }
-            }
-            
-            // Re-render with recovered data
-            this.renderDashboard();
-            this.renderBills();
-            this.renderInvoices();
-            this.renderRevenues();
-            
-            const totalRecovered = this.bills.length + this.invoices.length + this.revenues.length;
-            if (totalRecovered > 0) {
-                this.showToast(`${totalRecovered} registros recuperados com sucesso!`, 'success');
-            } else {
-                this.showToast('Nenhum dado foi encontrado para recuperação', 'info');
-            }
-            
-        } catch (error) {
-            console.error('Erro na recuperação de dados:', error);
-            this.showToast('Não foi possível recuperar os dados', 'error');
-        }
-    }
-
-    async saveData() {
-        try {
-            if (!this.storageManager || typeof this.storageManager.saveData !== 'function') {
-                console.warn('Storage manager não disponível para salvar dados');
-                // Try to save to localStorage as emergency backup
-                this.saveToLocalStorageBackup();
-                return false;
-            }
-            
-            await Promise.all([
-                this.storageManager.saveData('bills', this.bills || []).catch(error => {
-                    console.warn('Erro ao salvar boletos:', error);
-                    this.saveToLocalStorageBackup('bills', this.bills);
-                }),
-                this.storageManager.saveData('invoices', this.invoices || []).catch(error => {
-                    console.warn('Erro ao salvar notas fiscais:', error);
-                    this.saveToLocalStorageBackup('invoices', this.invoices);
-                }),
-                this.storageManager.saveData('revenues', this.revenues || []).catch(error => {
-                    console.warn('Erro ao salvar receitas:', error);
-                    this.saveToLocalStorageBackup('revenues', this.revenues);
-                })
-            ]);
-            
-            return true;
-        } catch (error) {
-            console.error('Erro ao salvar dados:', error);
-            // Emergency backup to localStorage
-            this.saveToLocalStorageBackup();
-            throw error;
-        }
-    }
-
-    saveToLocalStorageBackup(type = null, data = null) {
-        try {
-            if (type && data) {
-                localStorage.setItem(`financeai_${type}`, JSON.stringify(data));
-            } else {
-                localStorage.setItem('financeai_bills', JSON.stringify(this.bills || []));
-                localStorage.setItem('financeai_invoices', JSON.stringify(this.invoices || []));
-                localStorage.setItem('financeai_revenues', JSON.stringify(this.revenues || []));
-            }
-            console.log('Backup de emergência salvo no localStorage');
-        } catch (error) {
-            console.error('Erro no backup de emergência:', error);
-        }
-    }
-
-    async loadSettings() {
-        try {
-            if (!this.storageManager || typeof this.storageManager.loadSetting !== 'function') {
-                const backup = localStorage.getItem('financeai_setting_userSettings');
-                return backup ? JSON.parse(backup) : {};
-            }
-            
-            const savedSettings = await this.storageManager.loadSetting('userSettings');
-            return savedSettings || {};
-        } catch (error) {
-            console.error('Erro ao carregar configurações:', error);
-            // Try localStorage backup
-            try {
-                const backup = localStorage.getItem('financeai_setting_userSettings');
-                return backup ? JSON.parse(backup) : {};
-            } catch (backupError) {
-                console.error('Erro no backup de configurações:', backupError);
-                return {};
-            }
-        }
-    }
-
-    async saveSettings() {
-        try {
-            if (!this.storageManager || typeof this.storageManager.saveSetting !== 'function') {
-                console.warn('Storage manager não disponível para salvar configurações');
-                localStorage.setItem('financeai_setting_userSettings', JSON.stringify(this.settings));
-                return;
-            }
-            
-            await this.storageManager.saveSetting('userSettings', this.settings);
-            
-            // Also save to localStorage as backup
-            localStorage.setItem('financeai_setting_userSettings', JSON.stringify(this.settings));
-        } catch (error) {
-            console.error('Erro ao salvar configurações:', error);
-            // Emergency backup
-            try {
-                localStorage.setItem('financeai_setting_userSettings', JSON.stringify(this.settings));
-            } catch (backupError) {
-                console.error('Erro no backup de configurações:', backupError);
-            }
-        }
-    }
-
-    enableAutoSave() {
-        try {
-            // Auto-save every 30 seconds
-            setInterval(async () => {
-                try {
-                    await this.saveData();
-                    await this.saveSettings();
-                } catch (error) {
-                    console.error('Erro no auto-save:', error);
-                }
-            }, 30000);
-        } catch (error) {
-            console.error('Erro ao configurar auto-save:', error);
-        }
-    }
-
-    setupEventListeners() {
-        try {
-            // Form submissions
-            const addBillForm = document.getElementById('addBillForm');
-            if (addBillForm) {
-                addBillForm.addEventListener('submit', (e) => this.handleAddBill(e));
-            }
-
-            const addInvoiceForm = document.getElementById('addInvoiceForm');
-            if (addInvoiceForm) {
-                addInvoiceForm.addEventListener('submit', (e) => this.handleAddInvoice(e));
-            }
-
-            const addRevenueForm = document.getElementById('addRevenueForm');
-            if (addRevenueForm) {
-                addRevenueForm.addEventListener('submit', (e) => this.handleAddRevenue(e));
-            }
-
-            // Modal close events
-            document.addEventListener('click', (e) => {
-                if (e.target.classList.contains('modal')) {
-                    this.closeAllModals();
                 }
             });
-
-            // Keyboard shortcuts
-            document.addEventListener('keydown', (e) => {
-                if (e.key === 'Escape') {
-                    this.closeAllModals();
-                }
-            });
-        } catch (error) {
-            console.error('Erro ao configurar event listeners:', error);
-        }
-    }
-
-    setupNavigation() {
-        try {
-            const navLinks = document.querySelectorAll('.nav-link');
-            navLinks.forEach(link => {
-                link.addEventListener('click', (e) => {
-                    e.preventDefault();
-                    const href = link.getAttribute('href');
-                    if (href) {
-                        this.showSection(href.substring(1));
-                    }
-                });
-            });
-        } catch (error) {
-            console.error('Erro ao configurar navegação:', error);
-        }
-    }
-
-    showSection(sectionName) {
-        try {
-            // Hide all sections
-            document.querySelectorAll('.section').forEach(section => {
-                section.classList.remove('active');
-            });
-
-            // Show target section
-            const targetSection = document.getElementById(`${sectionName}-section`);
-            if (targetSection) {
-                targetSection.classList.add('active');
-            }
-
-            // Update navigation
-            document.querySelectorAll('.nav-link').forEach(link => {
-                link.classList.remove('active');
-            });
-
-            const activeLink = document.querySelector(`.nav-link[href="#${sectionName}"]`);
-            if (activeLink) {
-                activeLink.classList.add('active');
-            }
-
-            // Update page title
-            const pageTitle = document.getElementById('page-title');
-            if (pageTitle) {
-                const titles = {
-                    'dashboard': 'Dashboard',
-                    'bills': 'Gestão de Boletos',
-                    'invoices': 'Notas Fiscais',
-                    'revenues': 'Receitas',
-                    'notifications': 'Notificações',
-                    'settings': 'Configurações'
-                };
-                pageTitle.textContent = titles[sectionName] || 'FinanceAI';
-            }
-
-            // Render section content
-            this.renderSectionContent(sectionName);
-        } catch (error) {
-            console.error('Erro ao mostrar seção:', error);
-        }
-    }
-
-    renderSectionContent(sectionName) {
-        try {
-            switch (sectionName) {
-                case 'dashboard':
-                    this.renderDashboard();
-                    break;
-                case 'bills':
-                    this.renderBills();
-                    break;
-                case 'invoices':
-                    this.renderInvoices();
-                    break;
-                case 'revenues':
-                    this.renderRevenues();
-                    break;
-                case 'notifications':
-                    this.renderNotifications();
-                    break;
-                case 'settings':
-                    this.renderSettings();
-                    break;
-            }
-        } catch (error) {
-            console.error(`Erro ao renderizar seção ${sectionName}:`, error);
-        }
+        }, 100);
     }
 
     closeAllModals() {
-        try {
-            document.querySelectorAll('.modal').forEach(modal => {
-                modal.classList.remove('active');
-            });
-            
-            // Reset editing states
-            delete this.editingBillId;
-            delete this.editingInvoiceId;
-            delete this.editingRevenueId;
-        } catch (error) {
-            console.error('Erro ao fechar modais:', error);
-        }
+        document.querySelectorAll('.modal').forEach(modal => {
+            modal.style.display = 'none';
+        });
     }
 
-    async clearAllData() {
+    async initDatabase() {
         try {
-            if (!confirm('Tem certeza que deseja limpar todos os dados? Esta ação não pode ser desfeita.')) {
-                return;
-            }
-
-            this.showLoadingOverlay('Limpando dados...');
+            // Initialize IndexedDB for local backup
+            const request = indexedDB.open('FinanceDB', 1);
             
-            // Clear local data
-            this.bills = [];
-            this.invoices = [];
-            this.revenues = [];
-            this.notifications = [];
-            
-            // Clear storage
-            await this.storageManager.clearAllData();
-            
-            // Re-render all sections
-            this.renderDashboard();
-            this.renderBills();
-            this.renderInvoices();
-            this.renderRevenues();
-            this.renderNotifications();
-            
-            this.hideLoadingOverlay();
-            this.showToast('Todos os dados foram limpos com sucesso!', 'success');
-        } catch (error) {
-            this.hideLoadingOverlay();
-            console.error('Erro ao limpar dados:', error);
-            this.showToast('Erro ao limpar dados: ' + error.message, 'error');
-        }
-    }
-
-    async generateFinancialReport() {
-        try {
-            this.showLoadingOverlay('Gerando relatório financeiro...');
-            
-            const reportData = await this.measureAsyncPerformance('generateReport', async () => {
-                return this.calculateFinancialMetrics();
-            });
-            
-            this.hideLoadingOverlay();
-            this.showFinancialReportModal(reportData);
-        } catch (error) {
-            this.hideLoadingOverlay();
-            console.error('Erro ao gerar relatório financeiro:', error);
-            this.showToast('Erro ao gerar relatório: ' + error.message, 'error');
-        }
-    }
-
-    async calculateFinancialMetrics() {
-        try {
-            const now = new Date();
-            const currentMonth = now.getMonth();
-            const currentYear = now.getFullYear();
-            
-            // Filter data by selected period
-            const periodDays = this.settings.defaultReportPeriod || 90;
-            const startDate = new Date();
-            startDate.setDate(startDate.getDate() - periodDays);
-            
-            const filteredBills = this.bills.filter(bill => {
-                if (!bill || !bill.createdAt) return false;
-                const billDate = new Date(bill.createdAt);
-                return billDate >= startDate;
-            });
-            
-            const filteredInvoices = this.invoices.filter(invoice => {
-                if (!invoice || !invoice.createdAt) return false;
-                const invoiceDate = new Date(invoice.createdAt);
-                return invoiceDate >= startDate;
-            });
-            
-            const filteredRevenues = this.revenues.filter(revenue => {
-                if (!revenue || !revenue.createdAt) return false;
-                const revenueDate = new Date(revenue.createdAt);
-                return revenueDate >= startDate;
-            });
-            
-            // Calculate totals
-            const totalRevenues = filteredRevenues.reduce((sum, revenue) => sum + (revenue.amount || 0), 0);
-            const totalBills = filteredBills.reduce((sum, bill) => sum + (bill.amount || 0), 0);
-            const totalInvoices = filteredInvoices.reduce((sum, invoice) => sum + (invoice.amount || 0), 0);
-            const totalExpenses = totalBills + totalInvoices;
-            const netBalance = totalRevenues - totalExpenses;
-            
-            // Calculate by status
-            const paidBills = filteredBills.filter(bill => bill.status === 'paid');
-            const pendingBills = filteredBills.filter(bill => bill.status === 'pending');
-            const overdueBills = filteredBills.filter(bill => this.isBillOverdue(bill));
-            
-            const totalPaid = paidBills.reduce((sum, bill) => sum + (bill.amount || 0), 0);
-            const totalPending = pendingBills.reduce((sum, bill) => sum + (bill.amount || 0), 0);
-            const totalOverdue = overdueBills.reduce((sum, bill) => sum + (bill.amount || 0), 0);
-            
-            // Calculate by category
-            const categoryBreakdown = this.calculateCategoryBreakdown(filteredBills, filteredInvoices, filteredRevenues);
-            
-            // Calculate monthly trends
-            const monthlyTrends = this.calculateMonthlyTrends();
-            
-            return {
-                period: `${periodDays} dias`,
-                summary: {
-                    totalRevenues,
-                    totalExpenses,
-                    netBalance,
-                    totalBills: filteredBills.length,
-                    totalInvoices: filteredInvoices.length,
-                    totalRevenues: filteredRevenues.length
-                },
-                billsStatus: {
-                    paid: { count: paidBills.length, amount: totalPaid },
-                    pending: { count: pendingBills.length, amount: totalPending },
-                    overdue: { count: overdueBills.length, amount: totalOverdue }
-                },
-                categoryBreakdown,
-                monthlyTrends,
-                generatedAt: new Date().toISOString()
-            };
-        } catch (error) {
-            console.error('Erro ao calcular métricas financeiras:', error);
-            throw error;
-        }
-    }
-
-    calculateCategoryBreakdown(bills, invoices, revenues) {
-        try {
-            const categories = {};
-            
-            // Process bills
-            bills.forEach(bill => {
-                if (!bill || !bill.category) return;
-                const category = bill.category;
-                if (!categories[category]) {
-                    categories[category] = { count: 0, amount: 0, type: 'expense' };
-                }
-                categories[category].count++;
-                categories[category].amount += bill.amount || 0;
-            });
-            
-            // Process invoices
-            invoices.forEach(invoice => {
-                if (!invoice || !invoice.category) return;
-                const category = invoice.category;
-                if (!categories[category]) {
-                    categories[category] = { count: 0, amount: 0, type: 'expense' };
-                }
-                categories[category].count++;
-                categories[category].amount += invoice.amount || 0;
-            });
-            
-            // Process revenues
-            revenues.forEach(revenue => {
-                if (!revenue || !revenue.category) return;
-                const category = revenue.category;
-                if (!categories[category]) {
-                    categories[category] = { count: 0, amount: 0, type: 'income' };
-                }
-                categories[category].count++;
-                categories[category].amount += revenue.amount || 0;
-            });
-            
-            // Convert to array and sort by amount
-            return Object.entries(categories)
-                .map(([category, data]) => ({
-                    category,
-                    ...data,
-                    categoryName: this.getCategoryText(category)
-                }))
-                .sort((a, b) => b.amount - a.amount);
-        } catch (error) {
-            console.error('Erro ao calcular breakdown por categoria:', error);
-            return [];
-        }
-    }
-
-    calculateMonthlyTrends() {
-        try {
-            const trends = [];
-            
-            // Get last 6 months
-            for (let i = 5; i >= 0; i--) {
-                const date = new Date();
-                date.setMonth(date.getMonth() - i);
-                
-                const monthKey = `${date.getFullYear()}-${date.getMonth()}`;
-                const monthName = date.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
-                
-                trends[monthKey] = {
-                    name: monthName,
-                    revenues: 0,
-                    expenses: 0,
-                    balance: 0
-                };
-            }
-            
-            // Calculate revenues
-            this.revenues.forEach(revenue => {
-                if (!revenue || !revenue.date) return;
-                const date = new Date(revenue.date);
-                const monthKey = `${date.getFullYear()}-${date.getMonth()}`;
-                if (trends[monthKey]) {
-                    trends[monthKey].revenues += revenue.amount || 0;
-                }
-            });
-            
-            // Calculate expenses (bills + invoices)
-            [...this.bills, ...this.invoices].forEach(item => {
-                if (!item) return;
-                const date = new Date(item.dueDate || item.date);
-                if (isNaN(date.getTime())) return;
-                const monthKey = `${date.getFullYear()}-${date.getMonth()}`;
-                if (trends[monthKey]) {
-                    trends[monthKey].expenses += item.amount || 0;
-                }
-            });
-            
-            // Calculate balance
-            Object.keys(trends).forEach(monthKey => {
-                const trend = trends[monthKey];
-                trend.balance = trend.revenues - trend.expenses;
-            });
-            
-            return Object.values(trends);
-        } catch (error) {
-            console.error('Erro ao calcular tendências mensais:', error);
-            return [];
-        }
-    }
-
-    showFinancialReportModal(reportData) {
-        try {
-            // Create modal
-            const modal = document.createElement('div');
-            modal.className = 'modal active';
-            modal.innerHTML = `
-                <div class="modal-content report-modal">
-                    <div class="modal-header">
-                        <h3><i class="fas fa-chart-bar"></i> Relatório Financeiro Detalhado</h3>
-                        <button class="close-btn" onclick="this.closest('.modal').remove()">&times;</button>
-                    </div>
-                    <div class="modal-body">
-                        <div class="report-summary">
-                            <h4>Resumo Geral (${reportData.period})</h4>
-                            <div class="summary-grid">
-                                <div class="summary-item positive">
-                                    <i class="fas fa-arrow-up"></i>
-                                    <span class="label">Receitas</span>
-                                    <span class="value">R$ ${reportData.summary.totalRevenues.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
-                                </div>
-                                <div class="summary-item negative">
-                                    <i class="fas fa-arrow-down"></i>
-                                    <span class="label">Despesas</span>
-                                    <span class="value">R$ ${reportData.summary.totalExpenses.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
-                                </div>
-                                <div class="summary-item ${reportData.summary.netBalance >= 0 ? 'positive' : 'negative'}">
-                                    <i class="fas fa-balance-scale"></i>
-                                    <span class="label">Saldo Líquido</span>
-                                    <span class="value">R$ ${reportData.summary.netBalance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
-                                </div>
-                                <div class="summary-item neutral">
-                                    <i class="fas fa-file-alt"></i>
-                                    <span class="label">Total de Documentos</span>
-                                    <span class="value">${reportData.summary.totalBills + reportData.summary.totalInvoices + reportData.summary.totalRevenues}</span>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <div class="report-status">
-                            <h4>Status dos Boletos</h4>
-                            <div class="status-grid">
-                                <div class="status-item success">
-                                    <i class="fas fa-check-circle"></i>
-                                    <span class="status-label">Pagos</span>
-                                    <span class="status-value">${reportData.billsStatus.paid.count}</span>
-                                    <small>R$ ${reportData.billsStatus.paid.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</small>
-                                </div>
-                                <div class="status-item warning">
-                                    <i class="fas fa-clock"></i>
-                                    <span class="status-label">Pendentes</span>
-                                    <span class="status-value">${reportData.billsStatus.pending.count}</span>
-                                    <small>R$ ${reportData.billsStatus.pending.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</small>
-                                </div>
-                                <div class="status-item danger">
-                                    <i class="fas fa-exclamation-triangle"></i>
-                                    <span class="status-label">Vencidos</span>
-                                    <span class="status-value">${reportData.billsStatus.overdue.count}</span>
-                                    <small>R$ ${reportData.billsStatus.overdue.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</small>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <div class="report-categories">
-                            <h4>Análise por Categoria</h4>
-                            <div class="category-list">
-                                ${reportData.categoryBreakdown.map(cat => `
-                                    <div class="category-item">
-                                        <span class="category-name">${cat.categoryName}</span>
-                                        <span class="category-count">${cat.count} itens</span>
-                                        <span class="category-total">R$ ${cat.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
-                                        <span class="category-percentage">${((cat.amount / reportData.summary.totalExpenses) * 100).toFixed(1)}%</span>
-                                    </div>
-                                `).join('')}
-                            </div>
-                        </div>
-                        
-                        <div class="report-trends">
-                            <h4><i class="fas fa-chart-line"></i> Tendências Mensais</h4>
-                            <div class="trends-list">
-                                ${reportData.monthlyTrends.map(trend => `
-                                    <div class="trend-item">
-                                        <strong><i class="fas fa-calendar-alt"></i> ${trend.name}</strong>
-                                        <div class="trend-values">
-                                            <div class="trend-revenues">
-                                                <div style="font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 0.25rem;">RECEITAS</div>
-                                                <div style="font-size: 1.1rem; font-weight: 700; color: var(--success-color);">
-                                                    R$ ${trend.revenues.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                                                </div>
-                                            </div>
-                                            <div class="trend-expenses">
-                                                <div style="font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 0.25rem;">DESPESAS</div>
-                                                <div style="font-size: 1.1rem; font-weight: 700; color: var(--danger-color);">
-                                                    R$ ${trend.expenses.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                                                </div>
-                                            </div>
-                                            <div class="trend-balance ${trend.balance >= 0 ? 'positive' : 'negative'}">
-                                                <div style="font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 0.25rem;">SALDO</div>
-                                                <div style="font-size: 1.2rem; font-weight: 700;">
-                                                    R$ ${trend.balance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                                                </div>
-                                                <div style="font-size: 0.75rem; margin-top: 0.25rem; opacity: 0.8;">
-                                                    ${trend.balance >= 0 ? 'Superávit' : 'Déficit'}
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                `).join('')}
-                            </div>
-                        </div>
-                    </div>
-                    <div class="modal-footer">
-                        <button class="btn btn-info" onclick="financeAI.exportReport('${JSON.stringify(reportData).replace(/"/g, '&quot;')}')">
-                            <i class="fas fa-download"></i> Exportar Relatório
-                        </button>
-                        <button class="btn btn-secondary" onclick="this.closest('.modal').remove()">
-                            Fechar
-                        </button>
-                    </div>
-                </div>
-            `;
-            
-            document.body.appendChild(modal);
-        } catch (error) {
-            console.error('Erro ao mostrar modal de relatório:', error);
-            this.showToast('Erro ao exibir relatório', 'error');
-        }
-    }
-
-    async showSpendingInsights() {
-        try {
-            this.showLoadingOverlay('Analisando padrões de gastos...');
-            
-            const insights = await this.measureAsyncPerformance('generateInsights', async () => {
-                return this.generateSpendingInsights();
-            });
-            
-            this.hideLoadingOverlay();
-            this.showInsightsModal(insights);
-        } catch (error) {
-            this.hideLoadingOverlay();
-            console.error('Erro ao gerar insights:', error);
-            this.showToast('Erro ao gerar insights: ' + error.message, 'error');
-        }
-    }
-
-    async generateSpendingInsights() {
-        try {
-            const insights = [];
-            const now = new Date();
-            
-            // Insight 1: Overdue bills
-            const overdueBills = this.bills.filter(bill => this.isBillOverdue(bill));
-            if (overdueBills.length > 0) {
-                const totalOverdue = overdueBills.reduce((sum, bill) => sum + bill.amount, 0);
-                insights.push({
-                    type: 'danger',
-                    title: 'Boletos Vencidos',
-                    message: `Você tem ${overdueBills.length} boletos vencidos totalizando R$ ${totalOverdue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}. Priorize o pagamento para evitar juros e multas.`,
-                    priority: 'high'
-                });
-            }
-            
-            // Insight 2: High spending categories
-            const categoryTotals = {};
-            [...this.bills, ...this.invoices].forEach(item => {
-                if (!item || !item.category) return;
-                if (!categoryTotals[item.category]) categoryTotals[item.category] = 0;
-                categoryTotals[item.category] += item.amount || 0;
-            });
-            
-            const topCategory = Object.entries(categoryTotals)
-                .sort(([,a], [,b]) => b - a)[0];
-            
-            if (topCategory && topCategory[1] > 5000) {
-                insights.push({
-                    type: 'warning',
-                    title: 'Categoria com Maior Gasto',
-                    message: `A categoria "${this.getCategoryText(topCategory[0])}" representa o maior gasto com R$ ${topCategory[1].toLocaleString('pt-BR', { minimumFractionDigits: 2 })}. Considere revisar esses gastos.`,
-                    priority: 'medium'
-                });
-            }
-            
-            // Insight 3: Cashflow trend
-            const currentMonth = this.calculateMonthlyTrends().slice(-1)[0];
-            if (currentMonth && currentMonth.balance < 0) {
-                insights.push({
-                    type: 'warning',
-                    title: 'Fluxo de Caixa Negativo',
-                    message: `O saldo do mês atual está negativo em R$ ${Math.abs(currentMonth.balance).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}. Considere aumentar receitas ou reduzir despesas.`,
-                    priority: 'high'
-                });
-            }
-            
-            // Insight 4: Upcoming bills
-            const upcomingBills = this.bills.filter(bill => {
-                if (!bill || bill.status !== 'pending') return false;
-                const daysUntil = this.getDaysUntilDue(bill.dueDate);
-                return daysUntil > 0 && daysUntil <= 7;
-            });
-            
-            if (upcomingBills.length > 0) {
-                const totalUpcoming = upcomingBills.reduce((sum, bill) => sum + bill.amount, 0);
-                insights.push({
-                    type: 'info',
-                    title: 'Vencimentos Próximos',
-                    message: `${upcomingBills.length} boletos vencerão nos próximos 7 dias, totalizando R$ ${totalUpcoming.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}. Organize-se para os pagamentos.`,
-                    priority: 'medium'
-                });
-            }
-            
-            // Insight 5: Revenue vs expenses ratio
-            const totalRevenues = this.revenues.reduce((sum, revenue) => sum + (revenue.amount || 0), 0);
-            const totalExpenses = [...this.bills, ...this.invoices].reduce((sum, item) => sum + (item.amount || 0), 0);
-            
-            if (totalRevenues > 0) {
-                const ratio = (totalExpenses / totalRevenues) * 100;
-                if (ratio > 80) {
-                    insights.push({
-                        type: 'warning',
-                        title: 'Alto Percentual de Gastos',
-                        message: `Suas despesas representam ${ratio.toFixed(1)}% das receitas. Considere reduzir gastos ou aumentar receitas para melhorar sua saúde financeira.`,
-                        priority: 'medium'
-                    });
-                } else if (ratio < 50) {
-                    insights.push({
-                        type: 'success',
-                        title: 'Excelente Controle Financeiro',
-                        message: `Parabéns! Suas despesas representam apenas ${ratio.toFixed(1)}% das receitas. Continue mantendo esse bom controle financeiro.`,
-                        priority: 'low'
-                    });
-                }
-            }
-            
-            return insights;
-        } catch (error) {
-            console.error('Erro ao gerar insights de gastos:', error);
-            return [];
-        }
-    }
-
-    showInsightsModal(insights) {
-        try {
-            const modal = document.createElement('div');
-            modal.className = 'modal active';
-            modal.innerHTML = `
-                <div class="modal-content insights-modal">
-                    <div class="modal-header">
-                        <h3><i class="fas fa-lightbulb"></i> Insights de Gastos</h3>
-                        <button class="close-btn" onclick="this.closest('.modal').remove()">&times;</button>
-                    </div>
-                    <div class="modal-body">
-                        ${insights.length > 0 ? `
-                            <div class="insights-list">
-                                ${insights.map(insight => `
-                                    <div class="insight-item ${insight.type}">
-                                        <div class="insight-icon">
-                                            <i class="fas fa-${this.getInsightIcon(insight.type)}"></i>
-                                        </div>
-                                        <div class="insight-content">
-                                            <h4>${insight.title}</h4>
-                                            <p>${insight.message}</p>
-                                        </div>
-                                    </div>
-                                `).join('')}
-                            </div>
-                        ` : `
-                            <div style="text-align: center; padding: 2rem; color: var(--text-secondary);">
-                                <i class="fas fa-check-circle" style="font-size: 3rem; margin-bottom: 1rem; color: var(--success-color);"></i>
-                                <h4>Tudo sob controle!</h4>
-                                <p>Não foram identificados pontos de atenção em seus gastos no momento.</p>
-                            </div>
-                        `}
-                    </div>
-                    <div class="modal-footer">
-                        <button class="btn btn-secondary" onclick="this.closest('.modal').remove()">
-                            Fechar
-                        </button>
-                    </div>
-                </div>
-            `;
-            
-            document.body.appendChild(modal);
-        } catch (error) {
-            console.error('Erro ao mostrar modal de insights:', error);
-            this.showToast('Erro ao exibir insights', 'error');
-        }
-    }
-
-    getInsightIcon(type) {
-        const icons = {
-            'success': 'check-circle',
-            'warning': 'exclamation-triangle',
-            'danger': 'exclamation-circle',
-            'info': 'info-circle'
-        };
-        return icons[type] || 'info-circle';
-    }
-
-    async predictCashFlow() {
-        try {
-            this.showLoadingOverlay('Calculando previsões...');
-            
-            const predictions = await this.measureAsyncPerformance('predictCashFlow', async () => {
-                return this.calculateCashFlowPredictions();
-            });
-            
-            this.hideLoadingOverlay();
-            this.showPredictionModal(predictions);
-        } catch (error) {
-            this.hideLoadingOverlay();
-            console.error('Erro ao prever fluxo de caixa:', error);
-            this.showToast('Erro ao calcular previsões: ' + error.message, 'error');
-        }
-    }
-
-    async calculateCashFlowPredictions() {
-        try {
-            const predictions = [];
-            const now = new Date();
-            
-            // Predict next 3 months
-            for (let i = 1; i <= 3; i++) {
-                const futureDate = new Date(now);
-                futureDate.setMonth(futureDate.getMonth() + i);
-                
-                const monthName = futureDate.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
-                
-                // Predict expenses based on pending bills and recurring patterns
-                const pendingBills = this.bills.filter(bill => {
-                    if (!bill || bill.status !== 'pending') return false;
-                    const dueDate = new Date(bill.dueDate);
-                    return dueDate.getMonth() === futureDate.getMonth() && 
-                           dueDate.getFullYear() === futureDate.getFullYear();
-                });
-                
-                const predictedExpenses = pendingBills.reduce((sum, bill) => sum + bill.amount, 0);
-                
-                // Predict revenues based on historical average
-                const historicalRevenues = this.revenues.filter(revenue => {
-                    if (!revenue || !revenue.date) return false;
-                    const revenueDate = new Date(revenue.date);
-                    return revenueDate.getMonth() === futureDate.getMonth();
-                });
-                
-                const avgRevenue = historicalRevenues.length > 0 
-                    ? historicalRevenues.reduce((sum, revenue) => sum + revenue.amount, 0) / historicalRevenues.length
-                    : 0;
-                
-                const predictedBalance = avgRevenue - predictedExpenses;
-                
-                predictions.push({
-                    month: monthName,
-                    predictedRevenues: avgRevenue,
-                    predictedExpenses: predictedExpenses,
-                    predictedBalance: predictedBalance,
-                    confidence: historicalRevenues.length > 0 ? 'Média' : 'Baixa',
-                    billsCount: pendingBills.length
-                });
-            }
-            
-            return predictions;
-        } catch (error) {
-            console.error('Erro ao calcular previsões:', error);
-            return [];
-        }
-    }
-
-    showPredictionModal(predictions) {
-        try {
-            const modal = document.createElement('div');
-            modal.className = 'modal active';
-            modal.innerHTML = `
-                <div class="modal-content prediction-modal">
-                    <div class="modal-header">
-                        <h3><i class="fas fa-crystal-ball"></i> Previsão de Fluxo de Caixa</h3>
-                        <button class="close-btn" onclick="this.closest('.modal').remove()">&times;</button>
-                    </div>
-                    <div class="modal-body">
-                        <div class="prediction-disclaimer">
-                            <i class="fas fa-info-circle"></i>
-                            <strong>Importante:</strong> As previsões são baseadas em dados históricos e boletos pendentes. 
-                            Os valores reais podem variar significativamente.
-                        </div>
-                        
-                        <div class="prediction-list">
-                            ${predictions.map(prediction => `
-                                <div class="prediction-item">
-                                    <div class="prediction-header">
-                                        <h4>${prediction.month}</h4>
-                                        <span class="prediction-status ${prediction.predictedBalance >= 0 ? 'positive' : 'negative'}">
-                                            ${prediction.predictedBalance >= 0 ? 'Superávit' : 'Déficit'}
-                                        </span>
-                                    </div>
-                                    <div class="prediction-details">
-                                        <div class="prediction-row">
-                                            <span class="label">Receitas Previstas:</span>
-                                            <span class="value positive">R$ ${prediction.predictedRevenues.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
-                                        </div>
-                                        <div class="prediction-row">
-                                            <span class="label">Despesas Previstas:</span>
-                                            <span class="value negative">R$ ${prediction.predictedExpenses.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
-                                        </div>
-                                        <div class="prediction-row total">
-                                            <span class="label">Saldo Previsto:</span>
-                                            <span class="value ${prediction.predictedBalance >= 0 ? 'positive' : 'negative'}">
-                                                R$ ${prediction.predictedBalance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                                            </span>
-                                        </div>
-                                        <div class="prediction-bills">
-                                            ${prediction.billsCount} boletos pendentes para este mês
-                                        </div>
-                                    </div>
-                                </div>
-                            `).join('')}
-                        </div>
-                    </div>
-                    <div class="modal-footer">
-                        <button class="btn btn-secondary" onclick="this.closest('.modal').remove()">
-                            Fechar
-                        </button>
-                    </div>
-                </div>
-            `;
-            
-            document.body.appendChild(modal);
-        } catch (error) {
-            console.error('Erro ao mostrar modal de previsão:', error);
-            this.showToast('Erro ao exibir previsões', 'error');
-        }
-    }
-
-    async exportReport(reportDataString) {
-        try {
-            const reportData = JSON.parse(reportDataString.replace(/&quot;/g, '"'));
-            
-            const reportText = `
-RELATÓRIO FINANCEIRO - ${new Date().toLocaleDateString('pt-BR')}
-${'='.repeat(50)}
-
-RESUMO GERAL (${reportData.period})
-${'-'.repeat(30)}
-Receitas: R$ ${reportData.summary.totalRevenues.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-Despesas: R$ ${reportData.summary.totalExpenses.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-Saldo Líquido: R$ ${reportData.summary.netBalance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-
-STATUS DOS BOLETOS
-${'-'.repeat(30)}
-Pagos: ${reportData.billsStatus.paid.count} (R$ ${reportData.billsStatus.paid.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })})
-Pendentes: ${reportData.billsStatus.pending.count} (R$ ${reportData.billsStatus.pending.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })})
-Vencidos: ${reportData.billsStatus.overdue.count} (R$ ${reportData.billsStatus.overdue.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })})
-
-ANÁLISE POR CATEGORIA
-${'-'.repeat(30)}
-${reportData.categoryBreakdown.map(cat => 
-    `${cat.categoryName}: R$ ${cat.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} (${cat.count} itens)`
-).join('\n')}
-
-Relatório gerado automaticamente pelo FinanceAI
-            `.trim();
-            
-            const blob = new Blob([reportText], { type: 'text/plain;charset=utf-8' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `relatorio-financeiro-${new Date().toISOString().split('T')[0]}.txt`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-            
-            this.showToast('Relatório exportado com sucesso!', 'success');
-        } catch (error) {
-            console.error('Erro ao exportar relatório:', error);
-            this.showToast('Erro ao exportar relatório', 'error');
-        }
-    }
-
-    async createBackup() {
-        try {
-            this.showLoadingOverlay('Criando backup...');
-            
-            const backupData = await this.storageManager.exportData();
-            const backupInfo = {
-                ...backupData,
-                backupDate: new Date().toISOString(),
-                version: '1.0',
-                systemInfo: {
-                    storageMode: this.storageManager.getStorageMode(),
-                    totalBills: this.bills.length,
-                    totalInvoices: this.invoices.length,
-                    totalRevenues: this.revenues.length
-                }
+            request.onerror = () => {
+                console.error('Database failed to open');
             };
             
-            // Save backup info to local storage
-            localStorage.setItem('financeai_last_backup', JSON.stringify({
-                date: backupInfo.backupDate,
-                recordCount: backupInfo.systemInfo.totalBills + backupInfo.systemInfo.totalInvoices + backupInfo.systemInfo.totalRevenues
-            }));
+            request.onsuccess = () => {
+                this.db = request.result;
+                console.log('Database opened successfully');
+            };
             
-            this.updateBackupInfo();
-            this.hideLoadingOverlay();
-            this.showToast('Backup criado com sucesso!', 'success');
-            
+            request.onupgradeneeded = (e) => {
+                const db = e.target.result;
+                
+                // Create object stores
+                if (!db.objectStoreNames.contains('income')) {
+                    db.createObjectStore('income', { keyPath: 'id' });
+                }
+                if (!db.objectStoreNames.contains('expenses')) {
+                    db.createObjectStore('expenses', { keyPath: 'id' });
+                }
+                if (!db.objectStoreNames.contains('bills')) {
+                    db.createObjectStore('bills', { keyPath: 'id' });
+                }
+                if (!db.objectStoreNames.contains('cards')) {
+                    db.createObjectStore('cards', { keyPath: 'id' });
+                }
+                if (!db.objectStoreNames.contains('backups')) {
+                    const backupStore = db.createObjectStore('backups', { keyPath: 'id', autoIncrement: true });
+                    backupStore.createIndex('timestamp', 'timestamp', { unique: false });
+                }
+            };
         } catch (error) {
-            this.hideLoadingOverlay();
-            console.error('Erro ao criar backup:', error);
-            this.showToast('Erro ao criar backup: ' + error.message, 'error');
+            console.error('Database initialization error:', error);
         }
     }
 
-    async downloadBackup() {
+    setupBackupSystem() {
+        // Auto backup every 5 minutes
+        setInterval(() => {
+            this.createAutoBackup();
+        }, 5 * 60 * 1000);
+        
+        // Backup on page unload
+        window.addEventListener('beforeunload', () => {
+            this.createAutoBackup();
+        });
+    }
+
+    async createAutoBackup() {
+        if (!this.db) return;
+        
         try {
-            this.showLoadingOverlay('Preparando backup para download...');
+            const transaction = this.db.transaction(['backups'], 'readwrite');
+            const store = transaction.objectStore('backups');
             
-            const backupData = await this.storageManager.exportData();
-            const backupInfo = {
-                ...backupData,
-                backupDate: new Date().toISOString(),
+            const backup = {
+                timestamp: new Date().toISOString(),
+                data: JSON.stringify(this.data),
+                type: 'auto',
                 version: '1.0'
             };
             
-            const blob = new Blob([JSON.stringify(backupInfo, null, 2)], { 
-                type: 'application/json' 
-            });
+            await store.add(backup);
             
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `financeai-backup-${new Date().toISOString().split('T')[0]}.json`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-            
-            this.hideLoadingOverlay();
-            this.showToast('Backup baixado com sucesso!', 'success');
-        } catch (error) {
-            this.hideLoadingOverlay();
-            console.error('Erro ao baixar backup:', error);
-            this.showToast('Erro ao baixar backup: ' + error.message, 'error');
-        }
-    }
-
-    updateBackupInfo() {
-        try {
-            const backupInfo = document.getElementById('backupInfo');
-            const lastBackupTime = document.getElementById('lastBackupTime');
-            
-            if (backupInfo && lastBackupTime) {
-                const savedBackup = localStorage.getItem('financeai_last_backup');
-                if (savedBackup) {
-                    const backup = JSON.parse(savedBackup);
-                    lastBackupTime.textContent = new Date(backup.date).toLocaleString('pt-BR');
-                } else {
-                    lastBackupTime.textContent = 'Nunca';
-                }
-            }
-        } catch (error) {
-            console.error('Erro ao atualizar info de backup:', error);
-        }
-    }
-
-    setupPerformanceMonitoring() {
-        try {
-            this.performanceMetrics = {
-                operations: {},
-                errors: [],
-                startTime: performance.now(),
-                lastUpdate: new Date().toISOString()
-            };
-            
-            // Monitor critical operations
-            const originalConsoleError = console.error;
-            console.error = (...args) => {
-                originalConsoleError.apply(console, args);
-                if (this.performanceMetrics && this.performanceMetrics.errors) {
-                    this.performanceMetrics.errors.push({
-                        message: args.join(' '),
-                        timestamp: new Date().toISOString(),
-                        stack: new Error().stack
+            // Keep only last 20 backups instead of 10
+            const getAllRequest = store.getAll();
+            getAllRequest.onsuccess = () => {
+                const backups = getAllRequest.result;
+                if (backups.length > 20) {
+                    const oldestBackups = backups.slice(0, backups.length - 20);
+                    oldestBackups.forEach(backup => {
+                        store.delete(backup.id);
                     });
                 }
             };
         } catch (error) {
-            console.error('Erro ao configurar monitoramento de performance:', error);
+            console.error('Auto backup error:', error);
         }
     }
 
-    verifyDataIntegrityPeriodically() {
+    async saveToDatabase(storeName, data) {
+        if (!this.db) return;
+        
         try {
-            // Run integrity check every 10 minutes
-            setInterval(async () => {
-                try {
-                    const integrity = await this.verifyDataIntegrity();
-                    if (!integrity.isValid) {
-                        console.warn('Problemas de integridade detectados:', integrity.issues);
-                        // Could show a subtle notification to user
+            const transaction = this.db.transaction([storeName], 'readwrite');
+            const store = transaction.objectStore(storeName);
+            
+            // Clear existing data
+            await store.clear();
+            
+            // Add new data
+            for (const item of data) {
+                await store.add(item);
+            }
+        } catch (error) {
+            console.error(`Error saving to ${storeName}:`, error);
+        }
+    }
+
+    exportData() {
+        const exportData = {
+            ...this.data,
+            exportDate: new Date().toISOString(),
+            version: '1.0'
+        };
+        
+        const jsonData = JSON.stringify(exportData, null, 2);
+        const blob = new Blob([jsonData], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `financas-backup-${new Date().toISOString().split('T')[0]}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }
+
+    importData(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+        
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            try {
+                const importedData = JSON.parse(e.target.result);
+                
+                // Validate data structure
+                if (importedData.income && importedData.expenses && importedData.bills && importedData.cards) {
+                    if (confirm('Tem certeza que deseja importar os dados? Isso substituirá todos os dados atuais.')) {
+                        this.data = {
+                            income: importedData.income || [],
+                            expenses: importedData.expenses || [],
+                            bills: importedData.bills || [],
+                            cards: importedData.cards || []
+                        };
+                        
+                        this.saveData();
+                        this.updateAllTables();
+                        this.loadDashboard();
+                        this.generateInsights();
+                        
+                        alert('Dados importados com sucesso!');
                     }
-                } catch (error) {
-                    console.error('Erro na verificação de integridade:', error);
+                } else {
+                    alert('Arquivo inválido. Verifique se é um backup válido.');
                 }
-            }, 600000); // 10 minutes
-        } catch (error) {
-            console.error('Erro ao configurar verificação de integridade:', error);
-        }
+            } catch (error) {
+                alert('Erro ao importar arquivo. Verifique se o formato está correto.');
+                console.error('Import error:', error);
+            }
+        };
+        reader.readAsText(file);
     }
 
-    async handleAddBill(e) {
-        e.preventDefault();
+    setupNavigation() {
+        const navLinks = document.querySelectorAll('.nav-link');
+        navLinks.forEach(link => {
+            link.addEventListener('click', (e) => {
+                e.preventDefault();
+                const pageId = link.dataset.page;
+                this.showPage(pageId);
+                
+                // Update active nav link
+                navLinks.forEach(l => l.classList.remove('active'));
+                link.classList.add('active');
+            });
+        });
+    }
+    
+    showPage(pageId) {
+        const pages = document.querySelectorAll('.page');
+        pages.forEach(page => page.classList.remove('active'));
+        document.getElementById(pageId).classList.add('active');
         
-        try {
-            const form = e.target;
-            const formData = new FormData(form);
-            
-            const billData = {
-                id: this.editingBillId || Date.now(),
-                name: formData.get('billName') || document.getElementById('billName').value,
-                amount: parseFloat(formData.get('billAmount') || document.getElementById('billAmount').value),
-                dueDate: formData.get('billDueDate') || document.getElementById('billDueDate').value,
-                category: formData.get('billCategory') || document.getElementById('billCategory').value,
-                barcode: formData.get('billBarcode') || document.getElementById('billBarcode').value,
-                status: 'pending',
-                createdAt: this.editingBillId ? 
-                    this.bills.find(b => b.id === this.editingBillId)?.createdAt || new Date().toISOString() :
-                    new Date().toISOString(),
-                updatedAt: new Date().toISOString()
-            };
-            
-            // Validation
-            if (!billData.name || !billData.amount || !billData.dueDate) {
-                this.showToast('Preencha todos os campos obrigatórios', 'error');
-                return;
-            }
-            
-            if (billData.amount <= 0) {
-                this.showToast('O valor deve ser maior que zero', 'error');
-                return;
-            }
-            
-            // Check if editing
-            if (this.editingBillId) {
-                const index = this.bills.findIndex(bill => bill.id === this.editingBillId);
-                if (index !== -1) {
-                    this.bills[index] = billData;
-                }
-                delete this.editingBillId;
-            } else {
-                this.bills.push(billData);
-            }
-            
-            await this.saveData();
-            this.renderBills();
-            closeModal('addBillModal');
-            this.showToast('Boleto salvo com sucesso!', 'success');
-            
-        } catch (error) {
-            console.error('Erro ao adicionar boleto:', error);
-            this.showToast('Erro ao salvar boleto: ' + error.message, 'error');
+        // Load page-specific content
+        switch(pageId) {
+            case 'dashboard':
+                this.loadDashboard();
+                break;
+            case 'reports':
+                this.loadReports();
+                break;
+            case 'insights':
+                this.generateInsights();
+                break;
         }
     }
-
-    async handleAddInvoice(e) {
-        e.preventDefault();
-        
-        try {
-            const form = e.target;
-            const formData = new FormData(form);
+    
+    setupModals() {
+        // Modal open/close functionality with improved animations
+        const modals = document.querySelectorAll('.modal');
+        modals.forEach(modal => {
+            const closeBtn = modal.querySelector('.close');
+            closeBtn.addEventListener('click', () => {
+                this.closeModal(modal.id);
+            });
             
-            const invoiceData = {
-                id: this.editingInvoiceId || Date.now(),
-                number: formData.get('invoiceNumber') || document.getElementById('invoiceNumber').value,
-                supplier: formData.get('invoiceSupplier') || document.getElementById('invoiceSupplier').value,
-                amount: parseFloat(formData.get('invoiceAmount') || document.getElementById('invoiceAmount').value),
-                date: formData.get('invoiceDate') || document.getElementById('invoiceDate').value,
-                category: formData.get('invoiceCategory') || document.getElementById('invoiceCategory').value,
-                status: formData.get('invoiceStatus') || document.getElementById('invoiceStatus').value,
-                createdAt: this.editingInvoiceId ? 
-                    this.invoices.find(i => i.id === this.editingInvoiceId)?.createdAt || new Date().toISOString() :
-                    new Date().toISOString(),
-                updatedAt: new Date().toISOString()
-            };
-            
-            // Validation
-            if (!invoiceData.number || !invoiceData.supplier || !invoiceData.amount || !invoiceData.date) {
-                this.showToast('Preencha todos os campos obrigatórios', 'error');
-                return;
-            }
-            
-            if (invoiceData.amount <= 0) {
-                this.showToast('O valor deve ser maior que zero', 'error');
-                return;
-            }
-            
-            // Check if editing
-            if (this.editingInvoiceId) {
-                const index = this.invoices.findIndex(invoice => invoice.id === this.editingInvoiceId);
-                if (index !== -1) {
-                    this.invoices[index] = invoiceData;
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) {
+                    this.closeModal(modal.id);
                 }
-                delete this.editingInvoiceId;
-            } else {
-                this.invoices.push(invoiceData);
-            }
-            
-            await this.saveData();
-            this.renderInvoices();
-            closeModal('addInvoiceModal');
-            this.showToast('Nota fiscal salva com sucesso!', 'success');
-            
-        } catch (error) {
-            console.error('Erro ao adicionar nota fiscal:', error);
-            this.showToast('Erro ao salvar nota fiscal: ' + error.message, 'error');
+            });
+        });
+        
+        // Bill duplicates checkbox
+        const billHasDuplicates = document.getElementById('billHasDuplicates');
+        const duplicatesSection = document.getElementById('duplicatesSection');
+        if (billHasDuplicates && duplicatesSection) {
+            billHasDuplicates.addEventListener('change', () => {
+                duplicatesSection.style.display = billHasDuplicates.checked ? 'block' : 'none';
+            });
+        }
+        
+        // Card type selection
+        const cardType = document.getElementById('cardType');
+        const installmentSection = document.getElementById('installmentSection');
+        if (cardType && installmentSection) {
+            cardType.addEventListener('change', () => {
+                installmentSection.style.display = cardType.value === 'installment' ? 'block' : 'none';
+            });
         }
     }
-
-    async handleAddRevenue(e) {
-        e.preventDefault();
+    
+    setupForms() {
+        // Income form
+        document.getElementById('incomeForm').addEventListener('submit', (e) => {
+            e.preventDefault();
+            this.addIncome();
+        });
+        
+        // Expense form
+        document.getElementById('expenseForm').addEventListener('submit', (e) => {
+            e.preventDefault();
+            this.addExpense();
+        });
+        
+        // Bill form
+        document.getElementById('billForm').addEventListener('submit', (e) => {
+            e.preventDefault();
+            this.addBill();
+        });
+        
+        // Card form
+        document.getElementById('cardForm').addEventListener('submit', (e) => {
+            e.preventDefault();
+            this.addCard();
+        });
+        
+        // Upcoming modal filter
+        const upcomingFilter = document.getElementById('upcomingFilter');
+        if (upcomingFilter) {
+            upcomingFilter.addEventListener('change', () => {
+                this.loadUpcomingItems();
+            });
+        }
+    }
+    
+    setupFilters() {
+        // Search and filter functionality
+        const searchInputs = ['incomeSearch', 'expenseSearch'];
+        searchInputs.forEach(inputId => {
+            const input = document.getElementById(inputId);
+            if (input) {
+                input.addEventListener('input', () => {
+                    const type = inputId.replace('Search', '');
+                    this.filterTable(type);
+                });
+            }
+        });
+        
+        const filterSelects = ['incomeFilter', 'expenseFilter'];
+        filterSelects.forEach(selectId => {
+            const select = document.getElementById(selectId);
+            if (select) {
+                select.addEventListener('change', () => {
+                    const type = selectId.replace('Filter', '');
+                    this.filterTable(type);
+                });
+            }
+        });
+        
+        // Dashboard filters
+        const monthFilter = document.getElementById('monthFilter');
+        const yearFilter = document.getElementById('yearFilter');
+        
+        if (monthFilter && yearFilter) {
+            monthFilter.addEventListener('change', () => this.loadDashboard());
+            yearFilter.addEventListener('change', () => this.loadDashboard());
+        }
+    }
+    
+    addIncome() {
+        const form = document.getElementById('incomeForm');
+        this.clearFieldErrors('incomeForm');
+        
+        const description = document.getElementById('incomeDescription').value.trim();
+        const amount = parseFloat(document.getElementById('incomeAmount').value);
+        const date = document.getElementById('incomeDate').value;
+        const category = document.getElementById('incomeCategory').value;
+        
+        // Validation
+        let hasErrors = false;
+        
+        const descriptionErrors = this.validateField(description, { required: true, maxLength: 100 });
+        if (descriptionErrors.length > 0) {
+            this.showFieldError('incomeDescription', descriptionErrors);
+            hasErrors = true;
+        }
+        
+        const amountErrors = this.validateField(amount, { required: true, number: true });
+        if (amountErrors.length > 0) {
+            this.showFieldError('incomeAmount', amountErrors);
+            hasErrors = true;
+        }
+        
+        const dateErrors = this.validateField(date, { required: true, date: true });
+        if (dateErrors.length > 0) {
+            this.showFieldError('incomeDate', dateErrors);
+            hasErrors = true;
+        }
+        
+        if (hasErrors) return;
         
         try {
-            const form = e.target;
-            const formData = new FormData(form);
-            
-            const revenueData = {
-                id: this.editingRevenueId || Date.now(),
-                description: formData.get('revenueDescription') || document.getElementById('revenueDescription').value,
-                amount: parseFloat(formData.get('revenueAmount') || document.getElementById('revenueAmount').value),
-                date: formData.get('revenueDate') || document.getElementById('revenueDate').value,
-                category: formData.get('revenueCategory') || document.getElementById('revenueCategory').value,
-                source: formData.get('revenueSource') || document.getElementById('revenueSource').value,
-                notes: formData.get('revenueNotes') || document.getElementById('revenueNotes').value,
-                createdAt: this.editingRevenueId ? 
-                    this.revenues.find(r => r.id === this.editingRevenueId)?.createdAt || new Date().toISOString() :
-                    new Date().toISOString(),
-                updatedAt: new Date().toISOString()
+            const income = {
+                id: Date.now() + Math.random(),
+                description,
+                amount,
+                date,
+                category,
+                status: 'received',
+                createdAt: new Date().toISOString()
             };
             
-            // Validation
-            if (!revenueData.description || !revenueData.amount || !revenueData.date) {
-                this.showToast('Preencha todos os campos obrigatórios', 'error');
-                return;
-            }
-            
-            if (revenueData.amount <= 0) {
-                this.showToast('O valor deve ser maior que zero', 'error');
-                return;
-            }
-            
-            // Check if editing
-            if (this.editingRevenueId) {
-                const index = this.revenues.findIndex(revenue => revenue.id === this.editingRevenueId);
-                if (index !== -1) {
-                    this.revenues[index] = revenueData;
-                }
-                delete this.editingRevenueId;
-            } else {
-                this.revenues.push(revenueData);
-            }
-            
-            await this.saveData();
-            this.renderRevenues();
-            closeModal('addRevenueModal');
-            this.showToast('Receita salva com sucesso!', 'success');
-            
+            this.data.income.push(income);
+            this.saveData();
+            this.updateIncomeTable();
+            this.loadDashboard();
+            this.closeModal('incomeModal');
+            form.reset();
+            this.showToast('Receita adicionada com sucesso!');
         } catch (error) {
             console.error('Erro ao adicionar receita:', error);
-            this.showToast('Erro ao salvar receita: ' + error.message, 'error');
+            this.showToast('Erro ao adicionar receita. Tente novamente.', 'error');
         }
     }
-
-    async markBillAsPaid(billId) {
+    
+    addExpense() {
+        const form = document.getElementById('expenseForm');
+        this.clearFieldErrors('expenseForm');
+        
+        const description = document.getElementById('expenseDescription').value.trim();
+        const amount = parseFloat(document.getElementById('expenseAmount').value);
+        const date = document.getElementById('expenseDate').value;
+        const category = document.getElementById('expenseCategory').value;
+        
+        // Validation
+        let hasErrors = false;
+        
+        const descriptionErrors = this.validateField(description, { required: true, maxLength: 100 });
+        if (descriptionErrors.length > 0) {
+            this.showFieldError('expenseDescription', descriptionErrors);
+            hasErrors = true;
+        }
+        
+        const amountErrors = this.validateField(amount, { required: true, number: true });
+        if (amountErrors.length > 0) {
+            this.showFieldError('expenseAmount', amountErrors);
+            hasErrors = true;
+        }
+        
+        const dateErrors = this.validateField(date, { required: true, date: true });
+        if (dateErrors.length > 0) {
+            this.showFieldError('expenseDate', dateErrors);
+            hasErrors = true;
+        }
+        
+        if (hasErrors) return;
+        
         try {
-            const bill = this.bills.find(b => b.id == billId);
-            if (!bill) {
-                this.showToast('Boleto não encontrado', 'error');
-                return;
-            }
+            const expense = {
+                id: Date.now() + Math.random(),
+                description,
+                amount,
+                date,
+                category,
+                status: 'paid',
+                createdAt: new Date().toISOString()
+            };
             
-            if (bill.status === 'paid') {
-                this.showToast('Boleto já está marcado como pago', 'warning');
-                return;
-            }
-            
-            bill.status = 'paid';
-            bill.paidAt = new Date().toISOString();
-            bill.updatedAt = new Date().toISOString();
-            
-            await this.saveData();
-            this.renderBills();
-            this.renderDashboard();
-            this.showToast(`Boleto "${bill.name}" marcado como pago!`, 'success');
-            
+            this.data.expenses.push(expense);
+            this.saveData();
+            this.updateExpenseTable();
+            this.loadDashboard();
+            this.closeModal('expenseModal');
+            form.reset();
+            this.showToast('Despesa adicionada com sucesso!');
         } catch (error) {
-            console.error('Erro ao marcar boleto como pago:', error);
-            this.showToast('Erro ao marcar boleto como pago', 'error');
+            console.error('Erro ao adicionar despesa:', error);
+            this.showToast('Erro ao adicionar despesa. Tente novamente.', 'error');
         }
     }
-
-    editBill(billId) {
+    
+    addBill() {
+        const form = document.getElementById('billForm');
+        this.clearFieldErrors('billForm');
+        
+        const description = document.getElementById('billDescription').value.trim();
+        const amount = parseFloat(document.getElementById('billAmount').value);
+        const dueDate = document.getElementById('billDueDate').value;
+        const hasDuplicates = document.getElementById('billHasDuplicates').checked;
+        const duplicates = parseInt(document.getElementById('billDuplicates').value) || 1;
+        const interval = parseInt(document.getElementById('billInterval').value) || 30;
+        
+        // Validation
+        let hasErrors = false;
+        
+        const descriptionErrors = this.validateField(description, { required: true, maxLength: 100 });
+        if (descriptionErrors.length > 0) {
+            this.showFieldError('billDescription', descriptionErrors);
+            hasErrors = true;
+        }
+        
+        const amountErrors = this.validateField(amount, { required: true, number: true });
+        if (amountErrors.length > 0) {
+            this.showFieldError('billAmount', amountErrors);
+            hasErrors = true;
+        }
+        
+        const dateErrors = this.validateField(dueDate, { required: true, date: true });
+        if (dateErrors.length > 0) {
+            this.showFieldError('billDueDate', dateErrors);
+            hasErrors = true;
+        }
+        
+        if (hasDuplicates && (duplicates < 2 || duplicates > 12)) {
+            this.showFieldError('billDuplicates', ['Número de parcelas deve ser entre 2 e 12']);
+            hasErrors = true;
+        }
+        
+        if (hasErrors) return;
+        
         try {
-            const bill = this.bills.find(b => b.id == billId);
-            if (!bill) {
-                this.showToast('Boleto não encontrado', 'error');
-                return;
+            const baseId = Date.now();
+            const numberOfBills = hasDuplicates ? duplicates : 1;
+            
+            for (let i = 0; i < numberOfBills; i++) {
+                const bill = {
+                    id: baseId + i + Math.random(),
+                    description: hasDuplicates ? `${description} (${i + 1}/${duplicates})` : description,
+                    amount,
+                    dueDate: this.addDaysToDate(dueDate, i * interval),
+                    status: 'pending',
+                    duplicates: numberOfBills,
+                    duplicateNumber: i + 1,
+                    totalDuplicates: numberOfBills,
+                    createdAt: new Date().toISOString()
+                };
+                
+                this.data.bills.push(bill);
             }
             
-            // Set editing mode
-            this.editingBillId = billId;
-            
-            // Fill form with bill data
-            document.getElementById('billName').value = bill.name || '';
-            document.getElementById('billAmount').value = bill.amount || '';
-            document.getElementById('billDueDate').value = bill.dueDate || '';
-            document.getElementById('billCategory').value = bill.category || '';
-            document.getElementById('billBarcode').value = bill.barcode || '';
-            
-            // Open modal
-            openAddBillModal();
-            
+            this.saveData();
+            this.updateBillsTable();
+            this.loadDashboard();
+            this.closeModal('billModal');
+            form.reset();
+            this.showToast(`${numberOfBills} boleto(s) adicionado(s) com sucesso!`);
         } catch (error) {
-            console.error('Erro ao editar boleto:', error);
-            this.showToast('Erro ao carregar dados do boleto', 'error');
+            console.error('Erro ao adicionar boleto:', error);
+            this.showToast('Erro ao adicionar boleto. Tente novamente.', 'error');
         }
     }
-
-    async deleteBill(billId) {
+    
+    addCard() {
+        const form = document.getElementById('cardForm');
+        this.clearFieldErrors('cardForm');
+        
+        const description = document.getElementById('cardDescription').value.trim();
+        const amount = parseFloat(document.getElementById('cardAmount').value);
+        const date = document.getElementById('cardDate').value;
+        const cardType = document.getElementById('cardType').value;
+        const installments = parseInt(document.getElementById('cardInstallments').value) || 1;
+        
+        // Validation
+        let hasErrors = false;
+        
+        const descriptionErrors = this.validateField(description, { required: true, maxLength: 100 });
+        if (descriptionErrors.length > 0) {
+            this.showFieldError('cardDescription', descriptionErrors);
+            hasErrors = true;
+        }
+        
+        const amountErrors = this.validateField(amount, { required: true, number: true });
+        if (amountErrors.length > 0) {
+            this.showFieldError('cardAmount', amountErrors);
+            hasErrors = true;
+        }
+        
+        const dateErrors = this.validateField(date, { required: true, date: true });
+        if (dateErrors.length > 0) {
+            this.showFieldError('cardDate', dateErrors);
+            hasErrors = true;
+        }
+        
+        if (cardType === 'installment' && (installments < 2 || installments > 24)) {
+            this.showFieldError('cardInstallments', ['Número de parcelas deve ser entre 2 e 24']);
+            hasErrors = true;
+        }
+        
+        if (hasErrors) return;
+        
         try {
-            const bill = this.bills.find(b => b.id == billId);
-            if (!bill) {
-                this.showToast('Boleto não encontrado', 'error');
-                return;
+            const baseId = Date.now();
+            const numberOfInstallments = cardType === 'installment' ? installments : 1;
+            const installmentAmount = amount / numberOfInstallments;
+            
+            for (let i = 0; i < numberOfInstallments; i++) {
+                // Use the exact date provided by user as base date
+                const baseDate = new Date(date);
+                // Add months for subsequent installments
+                const dueDate = new Date(baseDate.getFullYear(), baseDate.getMonth() + i, baseDate.getDate());
+                
+                const card = {
+                    id: baseId + i + Math.random(),
+                    description: numberOfInstallments > 1 ? `${description} (${i + 1}/${numberOfInstallments})` : description,
+                    amount: installmentAmount,
+                    date: dueDate.toISOString().split('T')[0],
+                    dueDate: dueDate.toISOString().split('T')[0],
+                    type: cardType,
+                    installments: numberOfInstallments,
+                    installmentNumber: i + 1,
+                    totalInstallments: numberOfInstallments,
+                    status: 'pending',
+                    createdAt: new Date().toISOString()
+                };
+                
+                this.data.cards.push(card);
             }
             
-            if (!confirm(`Tem certeza que deseja excluir o boleto "${bill.name}"?`)) {
-                return;
-            }
-            
-            this.bills = this.bills.filter(b => b.id != billId);
-            await this.saveData();
-            this.renderBills();
-            this.renderDashboard();
-            this.showToast('Boleto excluído com sucesso!', 'success');
-            
+            this.saveData();
+            this.updateCardsTable();
+            this.loadDashboard();
+            this.closeModal('cardModal');
+            form.reset();
+            this.showToast(`${numberOfInstallments} parcela(s) de cartão adicionada(s) com sucesso!`);
         } catch (error) {
-            console.error('Erro ao excluir boleto:', error);
-            this.showToast('Erro ao excluir boleto', 'error');
+            console.error('Erro ao adicionar cartão:', error);
+            this.showToast('Erro ao adicionar cartão. Tente novamente.', 'error');
         }
     }
 
-    toggleDropdown(event, itemId) {
-        try {
-            event.stopPropagation();
+    addDaysToDate(dateString, days) {
+        const date = new Date(dateString);
+        date.setDate(date.getDate() + days);
+        return date.toISOString().split('T')[0];
+    }
+    
+    updateIncomeTable() {
+        const tbody = document.querySelector('#incomeTable tbody');
+        tbody.innerHTML = '';
+        
+        this.data.income.forEach(income => {
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td>${this.formatDate(income.date)}</td>
+                <td>${income.description}</td>
+                <td>${this.getCategoryName(income.category)}</td>
+                <td class="text-success">R$ ${income.amount.toFixed(2)}</td>
+                <td><span class="status-badge ${income.status}">${this.getStatusText(income.status)}</span></td>
+                <td>
+                    <div class="action-buttons">
+                        <button class="action-btn edit" onclick="financeManager.editIncome(${income.id})">
+                            <i class="fas fa-edit"></i>
+                        </button>
+                        <button class="action-btn delete" onclick="financeManager.deleteIncome(${income.id})">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </div>
+                </td>
+            `;
+            tbody.appendChild(row);
+        });
+    }
+    
+    updateExpenseTable() {
+        const tbody = document.querySelector('#expenseTable tbody');
+        tbody.innerHTML = '';
+        
+        this.data.expenses.forEach(expense => {
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td>${this.formatDate(expense.date)}</td>
+                <td>${expense.description}</td>
+                <td>${this.getCategoryName(expense.category)}</td>
+                <td class="text-danger">R$ ${expense.amount.toFixed(2)}</td>
+                <td><span class="status-badge ${expense.status}">${this.getStatusText(expense.status)}</span></td>
+                <td>
+                    <div class="action-buttons">
+                        <button class="action-btn edit" onclick="financeManager.editExpense(${expense.id})">
+                            <i class="fas fa-edit"></i>
+                        </button>
+                        <button class="action-btn delete" onclick="financeManager.deleteExpense(${expense.id})">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </div>
+                </td>
+            `;
+            tbody.appendChild(row);
+        });
+    }
+    
+    updateBillsTable() {
+        const tbody = document.querySelector('#billsTable tbody');
+        tbody.innerHTML = '';
+        
+        this.data.bills.forEach(bill => {
+            const row = document.createElement('tr');
+            const duplicateText = bill.totalDuplicates > 1 ? 
+                `${bill.duplicateNumber}/${bill.totalDuplicates}` : '-';
             
-            // Close all other dropdowns
-            document.querySelectorAll('.dropdown-content.show').forEach(dropdown => {
-                if (dropdown.id !== `dropdown-${itemId}`) {
-                    dropdown.classList.remove('show');
+            row.innerHTML = `
+                <td>${this.formatDate(bill.dueDate)}</td>
+                <td>${bill.description}</td>
+                <td class="text-danger">R$ ${bill.amount.toFixed(2)}</td>
+                <td><span class="status-badge ${bill.status}">${this.getStatusText(bill.status)}</span></td>
+                <td>${duplicateText}</td>
+                <td>
+                    <div class="action-buttons">
+                        <button class="action-btn edit" onclick="financeManager.payBill(${bill.id})">
+                            <i class="fas fa-check"></i>
+                        </button>
+                        <button class="action-btn delete" onclick="financeManager.deleteBill(${bill.id})">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </div>
+                </td>
+            `;
+            tbody.appendChild(row);
+        });
+        
+        this.updateBillsSummary();
+    }
+    
+    updateCardsTable() {
+        const tbody = document.querySelector('#cardsTable tbody');
+        tbody.innerHTML = '';
+        
+        this.data.cards.forEach(card => {
+            const row = document.createElement('tr');
+            const installmentText = card.installments > 1 ? 
+                `${card.installmentNumber}/${card.installments}` : 'À vista';
+            
+            row.innerHTML = `
+                <td>${this.formatDate(card.date)}</td>
+                <td>${card.description}</td>
+                <td class="text-danger">R$ ${card.amount.toFixed(2)}</td>
+                <td>${installmentText}</td>
+                <td><span class="status-badge ${card.status}">${this.getStatusText(card.status)}</span></td>
+                <td>
+                    <div class="action-buttons">
+                        <button class="action-btn edit" onclick="financeManager.payCard(${card.id})">
+                            <i class="fas fa-check"></i>
+                        </button>
+                        <button class="action-btn delete" onclick="financeManager.deleteCard(${card.id})">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </div>
+                </td>
+            `;
+            tbody.appendChild(row);
+        });
+        
+        this.updateCardsSummary();
+    }
+    
+    updateBillsSummary() {
+        const toExpire = this.data.bills.filter(bill => {
+            const dueDate = new Date(bill.dueDate);
+            const today = new Date();
+            const diffTime = dueDate - today;
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            return bill.status === 'pending' && diffDays <= 7 && diffDays >= 0;
+        }).reduce((sum, bill) => sum + bill.amount, 0);
+        
+        const overdue = this.data.bills.filter(bill => {
+            const dueDate = new Date(bill.dueDate);
+            const today = new Date();
+            return bill.status === 'pending' && dueDate < today;
+        }).reduce((sum, bill) => sum + bill.amount, 0);
+        
+        const paid = this.data.bills.filter(bill => bill.status === 'paid')
+            .reduce((sum, bill) => sum + bill.amount, 0);
+        
+        document.getElementById('billsToExpire').textContent = `R$ ${toExpire.toFixed(2)}`;
+        document.getElementById('billsOverdue').textContent = `R$ ${overdue.toFixed(2)}`;
+        document.getElementById('billsPaid').textContent = `R$ ${paid.toFixed(2)}`;
+    }
+    
+    updateCardsSummary() {
+        const currentMonth = new Date().getMonth();
+        const currentYear = new Date().getFullYear();
+        
+        const currentInvoice = this.data.cards.filter(card => {
+            const cardDate = new Date(card.date);
+            return cardDate.getMonth() === currentMonth && cardDate.getFullYear() === currentYear;
+        }).reduce((sum, card) => sum + card.amount, 0);
+        
+        const installments = this.data.cards.filter(card => 
+            card.installments > 1 && card.status === 'pending'
+        ).reduce((sum, card) => sum + card.amount, 0);
+        
+        document.getElementById('currentInvoice').textContent = `R$ ${currentInvoice.toFixed(2)}`;
+        document.getElementById('installments').textContent = `R$ ${installments.toFixed(2)}`;
+        document.getElementById('availableLimit').textContent = `R$ ${(5000 - currentInvoice).toFixed(2)}`;
+    }
+    
+    updateAllTables() {
+        this.updateIncomeTable();
+        this.updateExpenseTable();
+        this.updateBillsTable();
+        this.updateCardsTable();
+    }
+    
+    loadDashboard() {
+        this.updateDashboardCards();
+        this.updateRecentTransactions();
+        this.createCashFlowChart();
+    }
+    
+    updateDashboardCards() {
+        const totalIncome = this.data.income.reduce((sum, income) => sum + income.amount, 0);
+        const totalExpenses = this.data.expenses.reduce((sum, expense) => sum + expense.amount, 0);
+        
+        // Include ALL bills as expenses (not just paid ones)
+        const totalBills = this.data.bills.reduce((sum, bill) => sum + bill.amount, 0);
+        
+        // Include ALL card transactions as expenses
+        const totalCards = this.data.cards.reduce((sum, card) => sum + card.amount, 0);
+        
+        const totalAllExpenses = totalExpenses + totalBills + totalCards;
+        
+        // Calculate upcoming due dates (next 7 days)
+        const today = new Date();
+        const upcomingItems = [];
+        
+        // Check bills
+        this.data.bills.filter(bill => bill.status === 'pending').forEach(bill => {
+            const dueDate = new Date(bill.dueDate);
+            const diffTime = dueDate - today;
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            
+            if (diffDays <= 7 && diffDays >= 0) {
+                upcomingItems.push({
+                    ...bill,
+                    type: 'bill',
+                    daysUntil: diffDays
+                });
+            }
+        });
+        
+        // Check cards
+        this.data.cards.filter(card => card.status === 'pending').forEach(card => {
+            const dueDate = new Date(card.dueDate || card.date);
+            const diffTime = dueDate - today;
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            
+            if (diffDays <= 7 && diffDays >= 0) {
+                upcomingItems.push({
+                    ...card,
+                    type: 'card',
+                    daysUntil: diffDays
+                });
+            }
+        });
+        
+        const upcomingAmount = upcomingItems.reduce((sum, item) => sum + item.amount, 0);
+        const upcomingCount = upcomingItems.length;
+        
+        const balance = totalIncome - totalAllExpenses;
+        
+        document.getElementById('totalBalance').textContent = `R$ ${balance.toFixed(2)}`;
+        document.getElementById('totalIncome').textContent = `R$ ${totalIncome.toFixed(2)}`;
+        document.getElementById('totalExpenses').textContent = `R$ ${totalAllExpenses.toFixed(2)}`;
+        document.getElementById('upcomingAmount').textContent = `R$ ${upcomingAmount.toFixed(2)}`;
+        document.getElementById('upcomingCount').textContent = `${upcomingCount} próximos 7 dias`;
+        
+        // Update trends (simplified calculation)
+        const balanceElement = document.getElementById('totalBalance');
+        balanceElement.className = balance >= 0 ? 'card-value text-success' : 'card-value text-danger';
+        
+        // Store upcoming items for modal
+        this.upcomingItems = upcomingItems;
+    }
+    
+    updateRecentTransactions() {
+        try {
+            const allTransactions = [
+                ...this.data.income.map(item => ({...item, type: 'income'})),
+                ...this.data.expenses.map(item => ({...item, type: 'expense'})),
+                ...this.data.bills.map(item => ({...item, type: 'bill', date: item.dueDate})),
+                ...this.data.cards.map(item => ({...item, type: 'card', date: item.dueDate || item.date}))
+            ];
+            
+            // Sort by priority: upcoming due dates first, then by date
+            allTransactions.sort((a, b) => {
+                const today = new Date();
+                const dateA = new Date(a.date);
+                const dateB = new Date(b.date);
+                
+                // Calculate days until due date
+                const daysUntilA = Math.ceil((dateA - today) / (1000 * 60 * 60 * 24));
+                const daysUntilB = Math.ceil((dateB - today) / (1000 * 60 * 60 * 24));
+                
+                // Priority for bills and cards with upcoming due dates (next 7 days)
+                const isUrgentA = (a.type === 'bill' || a.type === 'card') && a.status === 'pending' && daysUntilA >= 0 && daysUntilA <= 7;
+                const isUrgentB = (b.type === 'bill' || b.type === 'card') && b.status === 'pending' && daysUntilB >= 0 && daysUntilB <= 7;
+                
+                // Priority for overdue items
+                const isOverdueA = (a.type === 'bill' || a.type === 'card') && a.status === 'pending' && daysUntilA < 0;
+                const isOverdueB = (b.type === 'bill' || b.type === 'card') && b.status === 'pending' && daysUntilB < 0;
+                
+                // Sort overdue items first, then urgent items, then by date
+                if (isOverdueA && !isOverdueB) return -1;
+                if (isOverdueB && !isOverdueA) return 1;
+                if (isUrgentA && !isUrgentB) return -1;
+                if (isUrgentB && !isUrgentA) return 1;
+                
+                // If both are urgent or both are normal, sort by date (newest first)
+                return dateB - dateA;
+            });
+            
+            const startIndex = this.currentTransactionPage * this.transactionsPerPage;
+            const endIndex = startIndex + this.transactionsPerPage;
+            const pageTransactions = allTransactions.slice(startIndex, endIndex);
+            
+            const container = document.getElementById('recentTransactions');
+            if (!container) return;
+            
+            container.innerHTML = '';
+            
+            if (pageTransactions.length === 0) {
+                container.innerHTML = '<p class="text-center text-muted">Nenhuma transação encontrada</p>';
+                return;
+            }
+            
+            pageTransactions.forEach(transaction => {
+                const div = document.createElement('div');
+                div.className = 'transaction-item';
+                
+                // Check if item is urgent or overdue
+                const today = new Date();
+                const transactionDate = new Date(transaction.date);
+                const daysUntil = Math.ceil((transactionDate - today) / (1000 * 60 * 60 * 24));
+                const isOverdue = (transaction.type === 'bill' || transaction.type === 'card') && transaction.status === 'pending' && daysUntil < 0;
+                const isUrgent = (transaction.type === 'bill' || transaction.type === 'card') && transaction.status === 'pending' && daysUntil >= 0 && daysUntil <= 7;
+                
+                if (isOverdue) {
+                    div.classList.add('overdue');
+                } else if (isUrgent) {
+                    div.classList.add('urgent');
                 }
+                
+                let iconClass = 'fas fa-arrow-up';
+                let transactionClass = 'income';
+                let amountPrefix = '+';
+                
+                if (transaction.type === 'expense' || transaction.type === 'bill' || transaction.type === 'card') {
+                    iconClass = 'fas fa-arrow-down';
+                    transactionClass = 'expense';
+                    amountPrefix = '-';
+                }
+                
+                // Special icons for bills and cards
+                if (transaction.type === 'bill') {
+                    iconClass = 'fas fa-file-invoice';
+                } else if (transaction.type === 'card') {
+                    iconClass = 'fas fa-credit-card';
+                }
+                
+                // Add installment info for cards
+                let installmentInfo = '';
+                if (transaction.type === 'card' && transaction.totalInstallments > 1) {
+                    installmentInfo = ` (${transaction.installmentNumber}/${transaction.totalInstallments})`;
+                }
+                
+                // Add urgency indicator
+                let urgencyIndicator = '';
+                if (isOverdue) {
+                    urgencyIndicator = ' <span class="urgency-badge overdue">VENCIDO</span>';
+                } else if (isUrgent) {
+                    urgencyIndicator = ` <span class="urgency-badge urgent">VENCE EM ${daysUntil} DIA${daysUntil > 1 ? 'S' : ''}</span>`;
+                }
+                
+                div.innerHTML = `
+                    <div class="transaction-info">
+                        <div class="transaction-icon ${transactionClass}">
+                            <i class="${iconClass}"></i>
+                        </div>
+                        <div class="transaction-details">
+                            <h4>${transaction.description}${installmentInfo}${urgencyIndicator}</h4>
+                            <p>${this.formatDate(transaction.date)}</p>
+                        </div>
+                    </div>
+                    <div class="transaction-amount ${transaction.type === 'income' ? 'positive' : 'negative'}">
+                        ${amountPrefix}R$ ${transaction.amount.toFixed(2)}
+                    </div>
+                `;
+                container.appendChild(div);
             });
             
-            // Toggle current dropdown
-            const dropdown = document.getElementById(`dropdown-${itemId}`);
-            if (dropdown) {
-                dropdown.classList.toggle('show');
+            // Update navigation buttons
+            this.updateTransactionNavigation(allTransactions.length);
+        } catch (error) {
+            console.error('Erro ao atualizar transações recentes:', error);
+            this.showToast('Erro ao carregar transações recentes', 'error');
+        }
+    }
+    
+    updateTransactionNavigation(totalTransactions) {
+        const prevBtn = document.getElementById('prevTransactions');
+        const nextBtn = document.getElementById('nextTransactions');
+        
+        if (prevBtn && nextBtn) {
+            prevBtn.disabled = this.currentTransactionPage === 0;
+            nextBtn.disabled = (this.currentTransactionPage + 1) * this.transactionsPerPage >= totalTransactions;
+        }
+    }
+    
+    previousTransactions() {
+        if (this.currentTransactionPage > 0) {
+            this.currentTransactionPage--;
+            this.updateRecentTransactions();
+        }
+    }
+    
+    nextTransactions() {
+        const allTransactions = [
+            ...this.data.income.map(item => ({...item, type: 'income'})),
+            ...this.data.expenses.map(item => ({...item, type: 'expense'})),
+            ...this.data.bills.map(item => ({...item, type: 'bill', date: item.dueDate})),
+            ...this.data.cards.map(item => ({...item, type: 'card', date: item.dueDate || item.date}))
+        ];
+        
+        const maxPage = Math.ceil(allTransactions.length / this.transactionsPerPage) - 1;
+        if (this.currentTransactionPage < maxPage) {
+            this.currentTransactionPage++;
+            this.updateRecentTransactions();
+        }
+    }
+    
+    loadReports() {
+        this.createCategoryChart();
+        this.createMonthlyChart();
+        this.createYearlyChart();
+        this.createExpenseTypeChart();
+        this.createSpendingTrendChart();
+        this.createBalanceChart();
+        this.createPaymentStatusChart();
+    }
+    
+    createCategoryChart() {
+        const ctx = document.getElementById('categoryChart');
+        if (!ctx) return;
+        
+        try {
+            const chartCtx = ctx.getContext('2d');
+            
+            // Clear any existing chart
+            if (this.charts.category) {
+                this.charts.category.destroy();
+                this.charts.category = null;
             }
-        } catch (error) {
-            console.error('Erro ao alternar dropdown:', error);
-        }
-    }
-
-    renderDashboard() {
-        try {
-            this.updateDashboardMetrics();
-            this.renderCashflowChart();
-            this.renderRecentActivities();
-        } catch (error) {
-            console.error('Erro ao renderizar dashboard:', error);
-        }
-    }
-
-    updateDashboardMetrics() {
-        try {
-            const now = new Date();
-            const upcomingBills = this.bills.filter(bill => {
-                if (!bill || bill.status !== 'pending') return false;
-                const dueDate = new Date(bill.dueDate);
-                const daysDiff = Math.ceil((dueDate - now) / (1000 * 60 * 60 * 24));
-                return daysDiff <= 7 && daysDiff >= 0;
+            
+            // Collect all expenses from different sources
+            const categories = {};
+            
+            // Regular expenses
+            this.data.expenses.forEach(expense => {
+                const categoryName = this.getCategoryName(expense.category);
+                categories[categoryName] = (categories[categoryName] || 0) + expense.amount;
             });
-
-            const totalPending = this.bills
-                .filter(bill => bill && bill.status === 'pending')
-                .reduce((sum, bill) => sum + (bill.amount || 0), 0);
-
-            const totalPaidThisMonth = this.bills
-                .filter(bill => {
-                    if (!bill || bill.status !== 'paid' || !bill.paidAt) return false;
-                    const paidDate = new Date(bill.paidAt);
-                    return paidDate.getMonth() === now.getMonth() && 
-                           paidDate.getFullYear() === now.getFullYear();
-                })
-                .reduce((sum, bill) => sum + (bill.amount || 0), 0);
-
-            const totalDocuments = this.bills.length + this.invoices.length + this.revenues.length;
-
-            // Update metric values
-            this.updateMetricCard(0, upcomingBills.length, 'Boletos');
-            this.updateMetricCard(1, `R$ ${totalPending.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, 'A pagar');
-            this.updateMetricCard(2, `R$ ${totalPaidThisMonth.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, 'Concluído');
-            this.updateMetricCard(3, totalDocuments, 'IA Analytics');
-        } catch (error) {
-            console.error('Erro ao atualizar métricas:', error);
-        }
-    }
-
-    updateMetricCard(index, value, label) {
-        try {
-            const cards = document.querySelectorAll('.dashboard-card .metric-value');
-            const labels = document.querySelectorAll('.dashboard-card .metric-label');
             
-            if (cards[index]) {
-                cards[index].textContent = value;
-            }
-            if (labels[index]) {
-                labels[index].textContent = label;
-            }
-        } catch (error) {
-            console.error('Erro ao atualizar card de métrica:', error);
-        }
-    }
-
-    renderCashflowChart() {
-        try {
-            const canvas = document.getElementById('cashflowChart');
-            if (!canvas) return;
-
-            const ctx = canvas.getContext('2d');
+            // Bills (all bills, not just paid ones)
+            this.data.bills.forEach(bill => {
+                const categoryName = 'Boletos';
+                categories[categoryName] = (categories[categoryName] || 0) + bill.amount;
+            });
             
-            // Destroy existing chart if it exists
-            if (window.cashflowChart instanceof Chart) {
-                window.cashflowChart.destroy();
+            // Card transactions (all transactions)
+            this.data.cards.forEach(card => {
+                const categoryName = 'Cartões';
+                categories[categoryName] = (categories[categoryName] || 0) + card.amount;
+            });
+            
+            const categoryKeys = Object.keys(categories);
+            if (categoryKeys.length === 0) {
+                this.showEmptyChart(chartCtx, 'Nenhuma despesa registrada');
+                return;
             }
-
-            // Prepare data for last 6 months
-            const monthsData = this.getCashflowData();
-
-            window.cashflowChart = new Chart(ctx, {
-                type: 'line',
+            
+            const colors = [
+                '#3b82f6', '#ef4444', '#10b981', '#f59e0b',
+                '#8b5cf6', '#06b6d4', '#84cc16', '#f97316',
+                '#ec4899', '#6b7280', '#14b8a6', '#f472b6'
+            ];
+            
+            this.charts.category = new Chart(chartCtx, {
+                type: 'doughnut',
                 data: {
-                    labels: monthsData.labels,
-                    datasets: [
-                        {
-                            label: 'Receitas',
-                            data: monthsData.revenues,
-                            borderColor: '#10b981',
-                            backgroundColor: 'rgba(16, 185, 129, 0.1)',
-                            tension: 0.4
-                        },
-                        {
-                            label: 'Despesas',
-                            data: monthsData.expenses,
-                            borderColor: '#ef4444',
-                            backgroundColor: 'rgba(239, 68, 68, 0.1)',
-                            tension: 0.4
-                        },
-                        {
-                            label: 'Saldo',
-                            data: monthsData.balance,
-                            borderColor: '#2563eb',
-                            backgroundColor: 'rgba(37, 99, 235, 0.1)',
-                            tension: 0.4
-                        }
-                    ]
+                    labels: categoryKeys,
+                    datasets: [{
+                        data: Object.values(categories),
+                        backgroundColor: colors.slice(0, categoryKeys.length),
+                        borderWidth: 3,
+                        borderColor: '#ffffff',
+                        hoverOffset: 8,
+                        hoverBorderWidth: 4
+                    }]
                 },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
-                    scales: {
-                        y: {
-                            beginAtZero: true,
-                            ticks: {
-                                callback: function(value) {
-                                    return 'R$ ' + value.toLocaleString('pt-BR');
+                    cutout: '60%',
+                    plugins: {
+                        legend: {
+                            position: 'bottom',
+                            labels: {
+                                padding: 20,
+                                usePointStyle: true,
+                                font: {
+                                    size: 12,
+                                    family: 'Inter'
+                                },
+                                color: '#374151'
+                            }
+                        },
+                        tooltip: {
+                            backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                            titleColor: '#ffffff',
+                            bodyColor: '#ffffff',
+                            borderColor: '#e5e7eb',
+                            borderWidth: 1,
+                            callbacks: {
+                                label: function(context) {
+                                    const total = context.dataset.data.reduce((sum, value) => sum + value, 0);
+                                    const percentage = ((context.parsed / total) * 100).toFixed(1);
+                                    return context.label + ': R$ ' + context.parsed.toLocaleString('pt-BR', { minimumFractionDigits: 2 }) + ' (' + percentage + '%)';
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        } catch (error) {
+            console.error('Erro ao criar gráfico de categorias:', error);
+            this.handleError(error, 'Erro ao carregar gráfico de categorias');
+        }
+    }
+
+    createMonthlyChart() {
+        const ctx = document.getElementById('monthlyChart');
+        if (!ctx) return;
+        
+        try {
+            const chartCtx = ctx.getContext('2d');
+            
+            // Clear any existing chart
+            if (this.charts.monthly) {
+                this.charts.monthly.destroy();
+                this.charts.monthly = null;
+            }
+            
+            const months = [];
+            const incomeData = [];
+            const expenseData = [];
+            
+            for (let i = 11; i >= 0; i--) {
+                const date = new Date();
+                date.setMonth(date.getMonth() - i);
+                months.push(date.toLocaleDateString('pt-BR', { month: 'short' }));
+                
+                const year = date.getFullYear();
+                const month = date.getMonth();
+                
+                // Calculate income for this month
+                const monthIncome = this.data.income.filter(item => {
+                    const itemDate = new Date(item.date);
+                    return itemDate.getMonth() === month && itemDate.getFullYear() === year;
+                }).reduce((sum, item) => sum + item.amount, 0);
+                
+                // Calculate all expenses for this month
+                const monthExpenses = this.data.expenses.filter(item => {
+                    const itemDate = new Date(item.date);
+                    return itemDate.getMonth() === month && itemDate.getFullYear() === year;
+                }).reduce((sum, item) => sum + item.amount, 0);
+                
+                // Include ALL bills for this month
+                const monthBills = this.data.bills.filter(item => {
+                    const itemDate = new Date(item.dueDate);
+                    return itemDate.getMonth() === month && itemDate.getFullYear() === year;
+                }).reduce((sum, item) => sum + item.amount, 0);
+                
+                // Include ALL card transactions for this month
+                const monthCards = this.data.cards.filter(item => {
+                    const itemDate = new Date(item.dueDate || item.date);
+                    return itemDate.getMonth() === month && itemDate.getFullYear() === year;
+                }).reduce((sum, item) => sum + item.amount, 0);
+                
+                const totalExpenses = monthExpenses + monthBills + monthCards;
+                
+                incomeData.push(monthIncome);
+                expenseData.push(totalExpenses);
+            }
+            
+            this.charts.monthly = new Chart(chartCtx, {
+                type: 'bar',
+                data: {
+                    labels: months,
+                    datasets: [{
+                        label: 'Receitas',
+                        data: incomeData,
+                        backgroundColor: '#10b981',
+                        borderRadius: 6,
+                        borderSkipped: false,
+                        hoverBackgroundColor: '#059669'
+                    }, {
+                        label: 'Despesas',
+                        data: expenseData,
+                        backgroundColor: '#ef4444',
+                        borderRadius: 6,
+                        borderSkipped: false,
+                        hoverBackgroundColor: '#dc2626'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: {
+                        mode: 'index',
+                        intersect: false
+                    },
+                    plugins: {
+                        legend: {
+                            position: 'top',
+                            labels: {
+                                usePointStyle: true,
+                                padding: 20,
+                                font: {
+                                    size: 12,
+                                    family: 'Inter'
+                                },
+                                color: '#374151'
+                            }
+                        },
+                        tooltip: {
+                            backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                            titleColor: '#ffffff',
+                            bodyColor: '#ffffff',
+                            borderColor: '#e5e7eb',
+                            borderWidth: 1,
+                            callbacks: {
+                                label: function(context) {
+                                    return context.dataset.label + ': R$ ' + context.parsed.y.toLocaleString('pt-BR', { minimumFractionDigits: 2 });
                                 }
                             }
                         }
                     },
-                    plugins: {
-                        tooltip: {
-                            callbacks: {
-                                label: function(context) {
-                                    return context.dataset.label + ': R$ ' + 
-                                           context.parsed.y.toLocaleString('pt-BR', { minimumFractionDigits: 2 });
+                    scales: {
+                        x: {
+                            grid: {
+                                display: false
+                            },
+                            ticks: {
+                                color: '#6b7280',
+                                font: {
+                                    size: 11,
+                                    family: 'Inter'
+                                }
+                            }
+                        },
+                        y: {
+                            beginAtZero: true,
+                            grid: {
+                                color: 'rgba(229, 231, 235, 0.5)',
+                                drawBorder: false
+                            },
+                            ticks: {
+                                color: '#6b7280',
+                                font: {
+                                    size: 11,
+                                    family: 'Inter'
+                                },
+                                callback: function(value) {
+                                    return 'R$ ' + value.toLocaleString('pt-BR', { minimumFractionDigits: 0 });
                                 }
                             }
                         }
@@ -1946,1607 +1455,1345 @@ Relatório gerado automaticamente pelo FinanceAI
                 }
             });
         } catch (error) {
-            console.error('Erro ao renderizar gráfico de fluxo de caixa:', error);
+            console.error('Erro ao criar gráfico mensal:', error);
+            this.handleError(error, 'Erro ao carregar gráfico mensal');
         }
     }
 
-    getCashflowData() {
+    createYearlyChart() {
+        const ctx = document.getElementById('yearlyChart');
+        if (!ctx) return;
+        
         try {
-            const months = [];
-            const revenues = [];
-            const expenses = [];
-            const balance = [];
+            const chartCtx = ctx.getContext('2d');
+            
+            // Clear any existing chart
+            if (this.charts.yearly) {
+                this.charts.yearly.destroy();
+                this.charts.yearly = null;
+            }
+            
+            const currentYear = new Date().getFullYear();
+            const years = [currentYear - 2, currentYear - 1, currentYear];
+            const incomeData = [];
+            const expenseData = [];
+            
+            years.forEach(year => {
+                // Calculate income for this year
+                const yearIncome = this.data.income.filter(item => {
+                    const itemDate = new Date(item.date);
+                    return itemDate.getFullYear() === year;
+                }).reduce((sum, item) => sum + item.amount, 0);
+                
+                // Calculate all expenses for this year
+                const yearExpenses = this.data.expenses.filter(item => {
+                    const itemDate = new Date(item.date);
+                    return itemDate.getFullYear() === year;
+                }).reduce((sum, item) => sum + item.amount, 0);
+                
+                // Include ALL bills for this year
+                const yearBills = this.data.bills.filter(item => {
+                    const itemDate = new Date(item.dueDate);
+                    return itemDate.getFullYear() === year;
+                }).reduce((sum, item) => sum + item.amount, 0);
+                
+                // Include ALL card transactions for this year
+                const yearCards = this.data.cards.filter(item => {
+                    const itemDate = new Date(item.dueDate || item.date);
+                    return itemDate.getFullYear() === year;
+                }).reduce((sum, item) => sum + item.amount, 0);
+                
+                const totalExpenses = yearExpenses + yearBills + yearCards;
+                
+                incomeData.push(yearIncome);
+                expenseData.push(totalExpenses);
+            });
+            
+            this.charts.yearly = new Chart(chartCtx, {
+                type: 'bar',
+                data: {
+                    labels: years,
+                    datasets: [{
+                        label: 'Receitas',
+                        data: incomeData,
+                        backgroundColor: '#10b981',
+                        borderRadius: 6,
+                        borderSkipped: false,
+                        hoverBackgroundColor: '#059669'
+                    }, {
+                        label: 'Despesas',
+                        data: expenseData,
+                        backgroundColor: '#ef4444',
+                        borderRadius: 6,
+                        borderSkipped: false,
+                        hoverBackgroundColor: '#dc2626'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: {
+                        mode: 'index',
+                        intersect: false
+                    },
+                    plugins: {
+                        legend: {
+                            position: 'top',
+                            labels: {
+                                usePointStyle: true,
+                                padding: 20,
+                                font: {
+                                    size: 12,
+                                    family: 'Inter'
+                                },
+                                color: '#374151'
+                            }
+                        },
+                        tooltip: {
+                            backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                            titleColor: '#ffffff',
+                            bodyColor: '#ffffff',
+                            borderColor: '#e5e7eb',
+                            borderWidth: 1,
+                            callbacks: {
+                                label: function(context) {
+                                    return context.dataset.label + ': R$ ' + context.parsed.y.toLocaleString('pt-BR', { minimumFractionDigits: 2 });
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            grid: {
+                                display: false
+                            },
+                            ticks: {
+                                color: '#6b7280',
+                                font: {
+                                    size: 11,
+                                    family: 'Inter'
+                                }
+                            }
+                        },
+                        y: {
+                            beginAtZero: true,
+                            grid: {
+                                color: 'rgba(229, 231, 235, 0.5)',
+                                drawBorder: false
+                            },
+                            ticks: {
+                                color: '#6b7280',
+                                font: {
+                                    size: 11,
+                                    family: 'Inter'
+                                },
+                                callback: function(value) {
+                                    return 'R$ ' + value.toLocaleString('pt-BR', { minimumFractionDigits: 0 });
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        } catch (error) {
+            console.error('Erro ao criar gráfico anual:', error);
+            this.handleError(error, 'Erro ao carregar gráfico anual');
+        }
+    }
 
-            // Get last 6 months
+    createExpenseTypeChart() {
+        const ctx = document.getElementById('expenseTypeChart');
+        if (!ctx) return;
+        
+        try {
+            const chartCtx = ctx.getContext('2d');
+            
+            // Clear any existing chart
+            if (this.charts.expenseType) {
+                this.charts.expenseType.destroy();
+                this.charts.expenseType = null;
+            }
+            
+            // Calculate totals by type
+            const regularExpenses = this.data.expenses.reduce((sum, expense) => sum + expense.amount, 0);
+            const billsExpenses = this.data.bills.reduce((sum, bill) => sum + bill.amount, 0);
+            const cardExpenses = this.data.cards.reduce((sum, card) => sum + card.amount, 0);
+            
+            const data = {
+                labels: ['Despesas Regulares', 'Boletos', 'Cartões'],
+                datasets: [{
+                    data: [regularExpenses, billsExpenses, cardExpenses],
+                    backgroundColor: ['#3b82f6', '#ef4444', '#f59e0b'],
+                    borderWidth: 3,
+                    borderColor: '#ffffff',
+                    hoverOffset: 8
+                }]
+            };
+            
+            if (regularExpenses === 0 && billsExpenses === 0 && cardExpenses === 0) {
+                this.showEmptyChart(chartCtx, 'Nenhuma despesa registrada');
+                return;
+            }
+            
+            this.charts.expenseType = new Chart(chartCtx, {
+                type: 'doughnut',
+                data: data,
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    cutout: '60%',
+                    plugins: {
+                        legend: {
+                            position: 'bottom',
+                            labels: {
+                                padding: 20,
+                                usePointStyle: true,
+                                font: {
+                                    size: 12,
+                                    family: 'Inter'
+                                }
+                            }
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    const total = context.dataset.data.reduce((sum, value) => sum + value, 0);
+                                    const percentage = ((context.parsed / total) * 100).toFixed(1);
+                                    return context.label + ': R$ ' + context.parsed.toLocaleString('pt-BR', { minimumFractionDigits: 2 }) + ' (' + percentage + '%)';
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        } catch (error) {
+            console.error('Erro ao criar gráfico de gastos por tipo:', error);
+        }
+    }
+    
+    createSpendingTrendChart() {
+        const ctx = document.getElementById('spendingTrendChart');
+        if (!ctx) return;
+        
+        try {
+            const chartCtx = ctx.getContext('2d');
+            
+            if (this.charts.spendingTrend) {
+                this.charts.spendingTrend.destroy();
+                this.charts.spendingTrend = null;
+            }
+            
+            const months = [];
+            const spendingData = [];
+            
             for (let i = 5; i >= 0; i--) {
                 const date = new Date();
                 date.setMonth(date.getMonth() - i);
+                months.push(date.toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' }));
                 
-                const monthKey = date.toLocaleString('pt-BR', { month: 'short', year: 'numeric' });
-                months.push(monthKey);
-
-                // Calculate revenues for this month
-                const monthRevenues = this.revenues.filter(revenue => {
-                    if (!revenue || !revenue.date) return false;
-                    const revenueDate = new Date(revenue.date);
-                    return revenueDate.getMonth() === date.getMonth() && 
-                           revenueDate.getFullYear() === date.getFullYear();
-                }).reduce((sum, revenue) => sum + (revenue.amount || 0), 0);
-
-                // Calculate expenses (bills + invoices) for this month
-                const monthBills = this.bills.filter(bill => {
-                    if (!bill || !bill.dueDate) return false;
-                    const billDate = new Date(bill.dueDate);
-                    return billDate.getMonth() === date.getMonth() && 
-                           billDate.getFullYear() === date.getFullYear();
-                }).reduce((sum, bill) => sum + (bill.amount || 0), 0);
-
-                const monthInvoices = this.invoices.filter(invoice => {
-                    if (!invoice || !invoice.date) return false;
-                    const invoiceDate = new Date(invoice.date);
-                    return invoiceDate.getMonth() === date.getMonth() && 
-                           invoiceDate.getFullYear() === date.getFullYear();
-                }).reduce((sum, invoice) => sum + (invoice.amount || 0), 0);
-
-                const monthExpenses = monthBills + monthInvoices;
-                const monthBalance = monthRevenues - monthExpenses;
-
-                revenues.push(monthRevenues);
-                expenses.push(monthExpenses);
-                balance.push(monthBalance);
-            }
-
-            return {
-                labels: months,
-                revenues: revenues,
-                expenses: expenses,
-                balance: balance
-            };
-        } catch (error) {
-            console.error('Erro ao calcular dados de fluxo de caixa:', error);
-            return {
-                labels: [],
-                revenues: [],
-                expenses: [],
-                balance: []
-            };
-        }
-    }
-
-    renderRecentActivities() {
-        try {
-            const activityList = document.getElementById('activityList');
-            if (!activityList) return;
-
-            // Initialize activities state if not exists
-            if (!this.activitiesState) {
-                this.activitiesState = {
-                    currentPage: 1,
-                    itemsPerPage: 5,
-                    dateFilter: 'all',
-                    filteredActivities: []
-                };
-            }
-
-            // Generate and filter activities
-            const allActivities = this.generateAllActivities();
-            const filteredActivities = this.filterActivitiesByDate(allActivities, this.activitiesState.dateFilter);
-            this.activitiesState.filteredActivities = filteredActivities;
-
-            // Calculate pagination
-            const totalPages = Math.ceil(filteredActivities.length / this.activitiesState.itemsPerPage);
-            const startIndex = (this.activitiesState.currentPage - 1) * this.activitiesState.itemsPerPage;
-            const endIndex = startIndex + this.activitiesState.itemsPerPage;
-            const currentActivities = filteredActivities.slice(startIndex, endIndex);
-
-            // Update activities container
-            const activitiesContainer = activityList.parentElement;
-            
-            // Add controls if not exists
-            if (!activitiesContainer.querySelector('.activities-controls')) {
-                const controlsHTML = `
-                    <div class="activities-controls">
-                        <div class="activities-filter">
-                            <label for="activitiesDateFilter">Período:</label>
-                            <select id="activitiesDateFilter" onchange="financeAI.onActivitiesDateFilterChange(this.value)">
-                                <option value="all">Todos</option>
-                                <option value="today">Hoje</option>
-                                <option value="week">Esta semana</option>
-                                <option value="month">Este mês</option>
-                                <option value="3months">Últimos 3 meses</option>
-                            </select>
-                        </div>
-                        <div class="activities-pagination">
-                            <button onclick="financeAI.changeActivitiesPage('prev')" id="activitiesPrevBtn">
-                                <i class="fas fa-chevron-left"></i>
-                            </button>
-                            <span class="page-info" id="activitiesPageInfo">1 de 1</span>
-                            <button onclick="financeAI.changeActivitiesPage('next')" id="activitiesNextBtn">
-                                <i class="fas fa-chevron-right"></i>
-                            </button>
-                        </div>
-                    </div>
-                `;
-                activityList.insertAdjacentHTML('beforebegin', controlsHTML);
-            }
-
-            // Update filter value
-            const dateFilter = document.getElementById('activitiesDateFilter');
-            if (dateFilter) {
-                dateFilter.value = this.activitiesState.dateFilter;
-            }
-
-            // Update pagination info and buttons
-            const pageInfo = document.getElementById('activitiesPageInfo');
-            const prevBtn = document.getElementById('activitiesPrevBtn');
-            const nextBtn = document.getElementById('activitiesNextBtn');
-            
-            if (pageInfo) {
-                pageInfo.textContent = `${this.activitiesState.currentPage} de ${Math.max(1, totalPages)}`;
-            }
-            
-            if (prevBtn) {
-                prevBtn.disabled = this.activitiesState.currentPage <= 1;
-            }
-            
-            if (nextBtn) {
-                nextBtn.disabled = this.activitiesState.currentPage >= totalPages;
-            }
-
-            // Render activities
-            if (currentActivities.length === 0) {
-                activityList.innerHTML = `
-                    <div class="activities-empty">
-                        <i class="fas fa-calendar-times"></i>
-                        <p>Nenhuma atividade encontrada</p>
-                        <small>Tente ajustar o filtro de período</small>
-                    </div>
-                `;
-                return;
-            }
-
-            activityList.innerHTML = currentActivities.map(activity => `
-                <div class="activity-item">
-                    <div class="activity-icon" style="background-color: ${activity.color};">
-                        <i class="fas fa-${activity.icon}"></i>
-                    </div>
-                    <div class="activity-content">
-                        <div class="activity-title">${this.escapeHtml(activity.title)}</div>
-                        <div class="activity-time">
-                            <i class="fas fa-clock"></i>
-                            ${this.formatRelativeTime(activity.time)}
-                        </div>
-                    </div>
-                </div>
-            `).join('');
-        } catch (error) {
-            console.error('Erro ao renderizar atividades recentes:', error);
-            const activityList = document.getElementById('activityList');
-            if (activityList) {
-                activityList.innerHTML = `
-                    <div class="activities-empty">
-                        <i class="fas fa-exclamation-triangle"></i>
-                        <p>Erro ao carregar atividades</p>
-                        <small>Tente recarregar a página</small>
-                    </div>
-                `;
-            }
-        }
-    }
-
-    generateAllActivities() {
-        try {
-            const activities = [];
-
-            // Add bills
-            this.bills.forEach(bill => {
-                if (bill && bill.createdAt) {
-                    activities.push({
-                        type: 'bill',
-                        title: `Boleto adicionado: ${bill.name}`,
-                        time: bill.createdAt,
-                        icon: 'file-invoice-dollar',
-                        color: '#f59e0b'
-                    });
-                }
-                if (bill && bill.paidAt) {
-                    activities.push({
-                        type: 'payment',
-                        title: `Boleto pago: ${bill.name}`,
-                        time: bill.paidAt,
-                        icon: 'check-circle',
-                        color: '#10b981'
-                    });
-                }
-            });
-
-            // Add invoices
-            this.invoices.forEach(invoice => {
-                if (invoice && invoice.createdAt) {
-                    activities.push({
-                        type: 'invoice',
-                        title: `Nota fiscal: ${invoice.number}`,
-                        time: invoice.createdAt,
-                        icon: 'receipt',
-                        color: '#2563eb'
-                    });
-                }
-                if (invoice && invoice.receivedAt) {
-                    activities.push({
-                        type: 'invoice-received',
-                        title: `Nota recebida: ${invoice.number}`,
-                        time: invoice.receivedAt,
-                        icon: 'inbox',
-                        color: '#10b981'
-                    });
-                }
-            });
-
-            // Add revenues
-            this.revenues.forEach(revenue => {
-                if (revenue && revenue.createdAt) {
-                    activities.push({
-                        type: 'revenue',
-                        title: `Receita: ${revenue.description}`,
-                        time: revenue.createdAt,
-                        icon: 'coins',
-                        color: '#10b981'
-                    });
-                }
-            });
-
-            // Sort by time (most recent first)
-            return activities.sort((a, b) => new Date(b.time) - new Date(a.time));
-        } catch (error) {
-            console.error('Erro ao gerar atividades:', error);
-            return [];
-        }
-    }
-
-    filterActivitiesByDate(activities, filter) {
-        try {
-            if (filter === 'all') {
-                return activities;
-            }
-
-            const now = new Date();
-            const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-            const startOfWeek = new Date(startOfDay.getTime() - (startOfDay.getDay() * 24 * 60 * 60 * 1000));
-            const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-            const startOf3Months = new Date(now.getFullYear(), now.getMonth() - 3, 1);
-
-            return activities.filter(activity => {
-                const activityDate = new Date(activity.time);
+                const year = date.getFullYear();
+                const month = date.getMonth();
                 
-                switch (filter) {
-                    case 'today':
-                        return activityDate >= startOfDay;
-                    case 'week':
-                        return activityDate >= startOfWeek;
-                    case 'month':
-                        return activityDate >= startOfMonth;
-                    case '3months':
-                        return activityDate >= startOf3Months;
-                    default:
-                        return true;
+                // Calculate total spending for this month
+                const monthExpenses = this.data.expenses.filter(item => {
+                    const itemDate = new Date(item.date);
+                    return itemDate.getMonth() === month && itemDate.getFullYear() === year;
+                }).reduce((sum, item) => sum + item.amount, 0);
+                
+                const monthBills = this.data.bills.filter(item => {
+                    const itemDate = new Date(item.dueDate);
+                    return itemDate.getMonth() === month && itemDate.getFullYear() === year;
+                }).reduce((sum, item) => sum + item.amount, 0);
+                
+                const monthCards = this.data.cards.filter(item => {
+                    const itemDate = new Date(item.dueDate || item.date);
+                    return itemDate.getMonth() === month && itemDate.getFullYear() === year;
+                }).reduce((sum, item) => sum + item.amount, 0);
+                
+                spendingData.push(monthExpenses + monthBills + monthCards);
+            }
+            
+            this.charts.spendingTrend = new Chart(chartCtx, {
+                type: 'line',
+                data: {
+                    labels: months,
+                    datasets: [{
+                        label: 'Gastos Totais',
+                        data: spendingData,
+                        borderColor: '#ef4444',
+                        backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                        fill: true,
+                        tension: 0.4,
+                        pointRadius: 6,
+                        pointHoverRadius: 8,
+                        pointBackgroundColor: '#ef4444',
+                        pointBorderColor: '#ffffff',
+                        pointBorderWidth: 2
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: false
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    return 'Gastos: R$ ' + context.parsed.y.toLocaleString('pt-BR', { minimumFractionDigits: 2 });
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            ticks: {
+                                callback: function(value) {
+                                    return 'R$ ' + value.toLocaleString('pt-BR', { minimumFractionDigits: 0 });
+                                }
+                            }
+                        }
+                    }
                 }
             });
         } catch (error) {
-            console.error('Erro ao filtrar atividades por data:', error);
-            return activities;
+            console.error('Erro ao criar gráfico de tendência:', error);
         }
     }
-
-    onActivitiesDateFilterChange(value) {
+    
+    createBalanceChart() {
+        const ctx = document.getElementById('balanceChart');
+        if (!ctx) return;
+        
         try {
-            this.activitiesState.dateFilter = value;
-            this.activitiesState.currentPage = 1; // Reset to first page
-            this.renderRecentActivities();
-        } catch (error) {
-            console.error('Erro ao alterar filtro de data:', error);
-        }
-    }
-
-    changeActivitiesPage(direction) {
-        try {
-            const totalPages = Math.ceil(this.activitiesState.filteredActivities.length / this.activitiesState.itemsPerPage);
+            const chartCtx = ctx.getContext('2d');
             
-            if (direction === 'prev' && this.activitiesState.currentPage > 1) {
-                this.activitiesState.currentPage--;
-            } else if (direction === 'next' && this.activitiesState.currentPage < totalPages) {
-                this.activitiesState.currentPage++;
+            if (this.charts.balance) {
+                this.charts.balance.destroy();
+                this.charts.balance = null;
             }
             
-            this.renderRecentActivities();
-        } catch (error) {
-            console.error('Erro ao alterar página de atividades:', error);
-        }
-    }
-
-    renderBills() {
-        try {
-            const billsList = document.getElementById('billsList');
-            if (!billsList) return;
-
-            if (!Array.isArray(this.bills) || this.bills.length === 0) {
-                billsList.innerHTML = `
-                    <div class="empty-state">
-                        <i class="fas fa-receipt"></i>
-                        <p>Nenhum boleto encontrado.</p>
-                        <small style="margin-top: 0.5rem; display: block; opacity: 0.7;">
-                            Use o botão "Adicionar Boleto" para começar
-                        </small>
-                    </div>
-                `;
-                return;
-            }
-
-            // Filter bills based on settings with improved logic
-            let filteredBills = [...this.bills];
-            if (!this.settings.showPaidBills) {
-                filteredBills = filteredBills.filter(bill => bill.status !== 'paid');
-            }
-
-            // Enhanced sorting: overdue first, then by due date
-            filteredBills.sort((a, b) => {
-                const isOverdueA = this.isBillOverdue(a);
-                const isOverdueB = this.isBillOverdue(b);
+            const months = [];
+            const balanceData = [];
+            
+            for (let i = 5; i >= 0; i--) {
+                const date = new Date();
+                date.setMonth(date.getMonth() - i);
+                months.push(date.toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' }));
                 
-                if (isOverdueA && !isOverdueB) return -1;
-                if (!isOverdueA && isOverdueB) return 1;
+                const year = date.getFullYear();
+                const month = date.getMonth();
                 
-                const dateA = new Date(a.dueDate);
-                const dateB = new Date(b.dueDate);
-                return dateA - dateB;
+                const monthIncome = this.data.income.filter(item => {
+                    const itemDate = new Date(item.date);
+                    return itemDate.getMonth() === month && itemDate.getFullYear() === year;
+                }).reduce((sum, item) => sum + item.amount, 0);
+                
+                const monthExpenses = this.data.expenses.filter(item => {
+                    const itemDate = new Date(item.date);
+                    return itemDate.getMonth() === month && itemDate.getFullYear() === year;
+                }).reduce((sum, item) => sum + item.amount, 0);
+                
+                const monthBills = this.data.bills.filter(item => {
+                    const itemDate = new Date(item.dueDate);
+                    return itemDate.getMonth() === month && itemDate.getFullYear() === year;
+                }).reduce((sum, item) => sum + item.amount, 0);
+                
+                const monthCards = this.data.cards.filter(item => {
+                    const itemDate = new Date(item.dueDate || item.date);
+                    return itemDate.getMonth() === month && itemDate.getFullYear() === year;
+                }).reduce((sum, item) => sum + item.amount, 0);
+                
+                balanceData.push(monthIncome - (monthExpenses + monthBills + monthCards));
+            }
+            
+            this.charts.balance = new Chart(chartCtx, {
+                type: 'bar',
+                data: {
+                    labels: months,
+                    datasets: [{
+                        label: 'Saldo Mensal',
+                        data: balanceData,
+                        backgroundColor: balanceData.map(value => value >= 0 ? '#10b981' : '#ef4444'),
+                        borderRadius: 6,
+                        borderSkipped: false
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: false
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    return 'Saldo: R$ ' + context.parsed.y.toLocaleString('pt-BR', { minimumFractionDigits: 2 });
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            ticks: {
+                                callback: function(value) {
+                                    return 'R$ ' + value.toLocaleString('pt-BR', { minimumFractionDigits: 0 });
+                                }
+                            }
+                        }
+                    }
+                }
             });
-
-            billsList.innerHTML = filteredBills.map(bill => {
-                if (!this.validateBillData(bill)) return '';
-                
-                const isOverdue = this.isBillOverdue(bill);
-                const daysUntilDue = this.getDaysUntilDue(bill.dueDate);
-                const isPaid = bill.status === 'paid';
-                
-                return `
-                    <div class="bill-item ${this.settings.compactView ? 'compact' : ''} ${isOverdue ? 'overdue' : ''} ${isPaid ? 'paid' : ''}" 
-                         data-bill-id="${bill.id}">
-                        <div class="item-header">
-                            <h3 class="item-title">${this.escapeHtml(bill.name)}</h3>
-                            <div class="item-status-container">
-                                <span class="item-status status-${bill.status}">
-                                    ${this.getStatusText(bill.status)}
-                                </span>
-                                ${isPaid ? `
-                                    <div class="dropdown-menu">
-                                        <button class="dropdown-toggle" onclick="financeAI.toggleDropdown(event, '${bill.id}')">
-                                            <i class="fas fa-ellipsis-v"></i>
-                                        </button>
-                                        <div class="dropdown-content" id="dropdown-${bill.id}">
-                                            <button onclick="financeAI.editBill('${bill.id}')">
-                                                <i class="fas fa-edit"></i> Editar
-                                            </button>
-                                            <button onclick="financeAI.deleteBill('${bill.id}')">
-                                                <i class="fas fa-trash"></i> Excluir
-                                            </button>
-                                        </div>
-                                    </div>
-                                ` : ''}
-                            </div>
-                        </div>
-                        ${!this.settings.compactView ? `
-                            <div class="item-details">
-                                <div class="detail-item">
-                                    <span class="detail-label">Valor</span>
-                                    <span class="detail-value amount">R$ ${bill.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
-                                </div>
-                                <div class="detail-item">
-                                    <span class="detail-label">Vencimento</span>
-                                    <span class="detail-value ${isOverdue ? 'text-danger' : ''}">${this.formatDate(bill.dueDate)}</span>
-                                </div>
-                                <div class="detail-item">
-                                    <span class="detail-label">Categoria</span>
-                                    <span class="detail-value">${this.getCategoryText(bill.category)}</span>
-                                </div>
-                                ${daysUntilDue !== null && !isPaid ? `
-                                    <div class="detail-item">
-                                        <span class="detail-label">Status</span>
-                                        <span class="detail-value ${daysUntilDue < 0 ? 'text-danger' : daysUntilDue <= 3 ? 'text-warning' : 'text-success'}">
-                                            ${daysUntilDue < 0 ? `Vencido há ${Math.abs(daysUntilDue)} dias` : 
-                                              daysUntilDue === 0 ? 'Vence hoje' : 
-                                              `Vence em ${daysUntilDue} dias`}
-                                        </span>
-                                    </div>
-                                ` : ''}
-                                ${isPaid && bill.paidAt ? `
-                                    <div class="detail-item">
-                                        <span class="detail-label">Pago em</span>
-                                        <span class="detail-value text-success">${this.formatDate(bill.paidAt)}</span>
-                                    </div>
-                                ` : ''}
-                            </div>
-                        ` : `
-                            <div class="compact-details">
-                                <span class="compact-amount">R$ ${bill.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
-                                <span class="compact-date ${isOverdue ? 'text-danger' : ''}">${this.formatDate(bill.dueDate)}</span>
-                            </div>
-                        `}
-                        <div class="item-actions">
-                            ${!isPaid ? `
-                                <button class="btn-sm btn-success" onclick="financeAI.markBillAsPaid('${bill.id}')">
-                                    <i class="fas fa-check"></i> Marcar Pago
-                                </button>
-                                <button class="btn-sm btn-warning" onclick="financeAI.editBill('${bill.id}')">
-                                    <i class="fas fa-edit"></i> Editar
-                                </button>
-                                <button class="btn-sm btn-danger" onclick="financeAI.deleteBill('${bill.id}')">
-                                    <i class="fas fa-trash"></i> Excluir
-                                </button>
-                            ` : `
-                                <span class="text-success" style="font-size: 0.875rem; font-weight: 500;">
-                                    <i class="fas fa-check-circle"></i> Boleto pago
-                                </span>
-                            `}
-                        </div>
-                    </div>
-                `;
-            }).filter(html => html).join('');
-
-            // Add filter controls with improved UI
-            this.addBillFilters();
-            
-            // Add summary info
-            this.addBillsSummary(filteredBills);
-            
         } catch (error) {
-            console.error('Erro ao renderizar boletos:', error);
-            const billsList = document.getElementById('billsList');
-            if (billsList) {
-                billsList.innerHTML = `
-                    <div class="error-state">
-                        <i class="fas fa-exclamation-triangle"></i>
-                        <p>Erro ao carregar boletos.</p>
-                        <button class="btn btn-primary" onclick="financeAI.renderBills()" style="margin-top: 1rem;">
-                            <i class="fas fa-refresh"></i> Tentar Novamente
+            console.error('Erro ao criar gráfico de balanço:', error);
+        }
+    }
+    
+    createPaymentStatusChart() {
+        const ctx = document.getElementById('paymentStatusChart');
+        if (!ctx) return;
+        
+        try {
+            const chartCtx = ctx.getContext('2d');
+            
+            if (this.charts.paymentStatus) {
+                this.charts.paymentStatus.destroy();
+                this.charts.paymentStatus = null;
+            }
+            
+            const paidBills = this.data.bills.filter(bill => bill.status === 'paid').length;
+            const pendingBills = this.data.bills.filter(bill => bill.status === 'pending').length;
+            const paidCards = this.data.cards.filter(card => card.status === 'paid').length;
+            const pendingCards = this.data.cards.filter(card => card.status === 'pending').length;
+            
+            this.charts.paymentStatus = new Chart(chartCtx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['Boletos Pagos', 'Boletos Pendentes', 'Cartões Pagos', 'Cartões Pendentes'],
+                    datasets: [{
+                        data: [paidBills, pendingBills, paidCards, pendingCards],
+                        backgroundColor: ['#10b981', '#ef4444', '#06b6d4', '#f59e0b'],
+                        borderWidth: 3,
+                        borderColor: '#ffffff'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    cutout: '60%',
+                    plugins: {
+                        legend: {
+                            position: 'bottom',
+                            labels: {
+                                padding: 15,
+                                usePointStyle: true,
+                                font: {
+                                    size: 11,
+                                    family: 'Inter'
+                                }
+                            }
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    return context.label + ': ' + context.parsed + ' itens';
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        } catch (error) {
+            console.error('Erro ao criar gráfico de status de pagamentos:', error);
+        }
+    }
+
+    showEmptyChart(ctx, message) {
+        ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+        ctx.font = '16px Inter';
+        ctx.fillStyle = '#6b7280';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(message, ctx.canvas.width / 2, ctx.canvas.height / 2);
+    }
+    
+    createCashFlowChart() {
+        const ctx = document.getElementById('cashFlowChart');
+        if (!ctx) return;
+        
+        try {
+            const chartCtx = ctx.getContext('2d');
+            
+            // Clear any existing chart
+            if (this.charts.cashFlow) {
+                this.charts.cashFlow.destroy();
+                this.charts.cashFlow = null;
+            }
+            
+            // Get data for the last 12 months
+            const months = [];
+            const incomeData = [];
+            const expenseData = [];
+            
+            for (let i = 11; i >= 0; i--) {
+                const date = new Date();
+                date.setMonth(date.getMonth() - i);
+                months.push(date.toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' }));
+                
+                const year = date.getFullYear();
+                const month = date.getMonth();
+                
+                // Calculate income for this month
+                const monthIncome = this.data.income.filter(item => {
+                    const itemDate = new Date(item.date);
+                    return itemDate.getMonth() === month && itemDate.getFullYear() === year;
+                }).reduce((sum, item) => sum + item.amount, 0);
+                
+                // Calculate all expenses for this month
+                const monthExpenses = this.data.expenses.filter(item => {
+                    const itemDate = new Date(item.date);
+                    return itemDate.getMonth() === month && itemDate.getFullYear() === year;
+                }).reduce((sum, item) => sum + item.amount, 0);
+                
+                // Include ALL bills for this month
+                const monthBills = this.data.bills.filter(item => {
+                    const itemDate = new Date(item.dueDate);
+                    return itemDate.getMonth() === month && itemDate.getFullYear() === year;
+                }).reduce((sum, item) => sum + item.amount, 0);
+                
+                // Include ALL card transactions for this month
+                const monthCards = this.data.cards.filter(item => {
+                    const itemDate = new Date(item.dueDate || item.date);
+                    return itemDate.getMonth() === month && itemDate.getFullYear() === year;
+                }).reduce((sum, item) => sum + item.amount, 0);
+                
+                const totalExpenses = monthExpenses + monthBills + monthCards;
+                
+                incomeData.push(monthIncome);
+                expenseData.push(totalExpenses);
+            }
+            
+            this.charts.cashFlow = new Chart(chartCtx, {
+                type: 'line',
+                data: {
+                    labels: months,
+                    datasets: [{
+                        label: 'Receitas',
+                        data: incomeData,
+                        borderColor: '#10b981',
+                        backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                        fill: false,
+                        tension: 0.4,
+                        pointRadius: 4,
+                        pointHoverRadius: 6,
+                        pointBackgroundColor: '#10b981',
+                        pointBorderColor: '#ffffff',
+                        pointBorderWidth: 2
+                    }, {
+                        label: 'Despesas',
+                        data: expenseData,
+                        borderColor: '#ef4444',
+                        backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                        fill: false,
+                        tension: 0.4,
+                        pointRadius: 4,
+                        pointHoverRadius: 6,
+                        pointBackgroundColor: '#ef4444',
+                        pointBorderColor: '#ffffff',
+                        pointBorderWidth: 2
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: {
+                        mode: 'index',
+                        intersect: false
+                    },
+                    plugins: {
+                        legend: {
+                            position: 'top',
+                            labels: {
+                                usePointStyle: true,
+                                padding: 20,
+                                font: {
+                                    size: 12,
+                                    family: 'Inter'
+                                }
+                            }
+                        },
+                        tooltip: {
+                            backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                            titleColor: '#ffffff',
+                            bodyColor: '#ffffff',
+                            borderColor: '#e5e7eb',
+                            borderWidth: 1,
+                            callbacks: {
+                                label: function(context) {
+                                    return context.dataset.label + ': R$ ' + context.parsed.y.toLocaleString('pt-BR', { minimumFractionDigits: 2 });
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            display: true,
+                            title: {
+                                display: true,
+                                text: 'Período',
+                                color: '#6b7280',
+                                font: {
+                                    size: 12,
+                                    family: 'Inter'
+                                }
+                            },
+                            grid: {
+                                color: 'rgba(229, 231, 235, 0.5)',
+                                drawBorder: false
+                            },
+                            ticks: {
+                                color: '#6b7280',
+                                font: {
+                                    size: 11,
+                                    family: 'Inter'
+                                }
+                            }
+                        },
+                        y: {
+                            display: true,
+                            title: {
+                                display: true,
+                                text: 'Valor (R$)',
+                                color: '#6b7280',
+                                font: {
+                                    size: 12,
+                                    family: 'Inter'
+                                }
+                            },
+                            beginAtZero: true,
+                            grid: {
+                                color: 'rgba(229, 231, 235, 0.5)',
+                                drawBorder: false
+                            },
+                            ticks: {
+                                color: '#6b7280',
+                                font: {
+                                    size: 11,
+                                    family: 'Inter'
+                                },
+                                callback: function(value) {
+                                    return 'R$ ' + value.toLocaleString('pt-BR', { minimumFractionDigits: 0 });
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        } catch (error) {
+            console.error('Erro ao criar gráfico de fluxo de caixa:', error);
+            this.handleError(error, 'Erro ao carregar gráfico de fluxo de caixa');
+        }
+    }
+    
+    generateInsights() {
+        const spendingTrend = this.analyzeSpendingTrend();
+        const savingsOpportunity = this.findSavingsOpportunity();
+        const alerts = this.generateAlerts();
+        const achievements = this.getAchievements();
+        
+        document.getElementById('spendingTrend').textContent = spendingTrend;
+        document.getElementById('savingsOpportunity').textContent = savingsOpportunity;
+        document.getElementById('alerts').textContent = alerts;
+        document.getElementById('achievements').textContent = achievements;
+    }
+    
+    analyzeSpendingTrend() {
+        const currentMonth = new Date().getMonth();
+        const lastMonth = currentMonth - 1;
+        
+        const currentExpenses = this.data.expenses.filter(expense => {
+            const date = new Date(expense.date);
+            return date.getMonth() === currentMonth;
+        }).reduce((sum, expense) => sum + expense.amount, 0);
+        
+        const lastExpenses = this.data.expenses.filter(expense => {
+            const date = new Date(expense.date);
+            return date.getMonth() === lastMonth;
+        }).reduce((sum, expense) => sum + expense.amount, 0);
+        
+        const diff = currentExpenses - lastExpenses;
+        const percentage = lastExpenses > 0 ? ((diff / lastExpenses) * 100).toFixed(1) : 0;
+        
+        if (diff > 0) {
+            return `Seus gastos aumentaram ${percentage}% em relação ao mês anterior. Fique atento!`;
+        } else if (diff < 0) {
+            return `Parabéns! Você reduziu seus gastos em ${Math.abs(percentage)}% este mês.`;
+        } else {
+            return `Seus gastos mantiveram-se estáveis em relação ao mês anterior.`;
+        }
+    }
+    
+    findSavingsOpportunity() {
+        const categories = {};
+        
+        // Include all types of expenses
+        this.data.expenses.forEach(expense => {
+            const categoryName = this.getCategoryName(expense.category);
+            categories[categoryName] = (categories[categoryName] || 0) + expense.amount;
+        });
+        
+        // Include bills
+        this.data.bills.forEach(bill => {
+            const categoryName = 'Boletos';
+            categories[categoryName] = (categories[categoryName] || 0) + bill.amount;
+        });
+        
+        // Include cards
+        this.data.cards.forEach(card => {
+            const categoryName = 'Cartões';
+            categories[categoryName] = (categories[categoryName] || 0) + card.amount;
+        });
+        
+        const categoryKeys = Object.keys(categories);
+        if (categoryKeys.length === 0) {
+            return 'Adicione mais transações para receber recomendações personalizadas.';
+        }
+        
+        const maxCategory = categoryKeys.reduce((a, b) => 
+            categories[a] > categories[b] ? a : b
+        );
+        
+        return `Sua maior categoria de gastos é ${maxCategory} (R$ ${categories[maxCategory].toFixed(2)}). Considere revisar estes gastos para economizar.`;
+    }
+    
+    generateAlerts() {
+        const alerts = [];
+        
+        // Check overdue bills
+        const overdueBills = this.data.bills.filter(bill => {
+            const dueDate = new Date(bill.dueDate);
+            const today = new Date();
+            return bill.status === 'pending' && dueDate < today;
+        });
+        
+        if (overdueBills.length > 0) {
+            alerts.push(`${overdueBills.length} boleto(s) vencido(s)`);
+        }
+        
+        // Check overdue cards
+        const overdueCards = this.data.cards.filter(card => {
+            const dueDate = new Date(card.dueDate || card.date);
+            const today = new Date();
+            return card.status === 'pending' && dueDate < today;
+        });
+        
+        if (overdueCards.length > 0) {
+            alerts.push(`${overdueCards.length} cartão(ões) vencido(s)`);
+        }
+        
+        // Check bills due soon
+        const billsDueSoon = this.data.bills.filter(bill => {
+            const dueDate = new Date(bill.dueDate);
+            const today = new Date();
+            const diffTime = dueDate - today;
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            return bill.status === 'pending' && diffDays <= 3 && diffDays >= 0;
+        });
+        
+        if (billsDueSoon.length > 0) {
+            alerts.push(`${billsDueSoon.length} boleto(s) vencendo em breve`);
+        }
+        
+        // Check cards due soon
+        const cardsDueSoon = this.data.cards.filter(card => {
+            const dueDate = new Date(card.dueDate || card.date);
+            const today = new Date();
+            const diffTime = dueDate - today;
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            return card.status === 'pending' && diffDays <= 3 && diffDays >= 0;
+        });
+        
+        if (cardsDueSoon.length > 0) {
+            alerts.push(`${cardsDueSoon.length} cartão(ões) vencendo em breve`);
+        }
+        
+        return alerts.length > 0 ? alerts.join(', ') : 'Nenhum alerta no momento.';
+    }
+    
+    getAchievements() {
+        const achievements = [];
+        
+        if (this.data.income.length >= 10) {
+            achievements.push('10+ receitas registradas');
+        }
+        
+        if (this.data.expenses.length >= 20) {
+            achievements.push('20+ despesas registradas');
+        }
+        
+        const totalIncome = this.data.income.reduce((sum, income) => sum + income.amount, 0);
+        const totalExpenses = this.data.expenses.reduce((sum, expense) => sum + expense.amount, 0);
+        
+        if (totalIncome > totalExpenses) {
+            achievements.push('Saldo positivo mantido');
+        }
+        
+        return achievements.length > 0 ? achievements.join(', ') : 'Continue usando o sistema para desbloquear conquistas!';
+    }
+    
+    populateFilters() {
+        const monthFilter = document.getElementById('monthFilter');
+        const yearFilter = document.getElementById('yearFilter');
+        
+        if (monthFilter && yearFilter) {
+            // Populate months
+            const months = [
+                'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
+                'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'
+            ];
+            
+            months.forEach((month, index) => {
+                const option = document.createElement('option');
+                option.value = index;
+                option.textContent = month;
+                monthFilter.appendChild(option);
+            });
+            
+            // Populate years
+            const currentYear = new Date().getFullYear();
+            for (let year = currentYear - 2; year <= currentYear + 1; year++) {
+                const option = document.createElement('option');
+                option.value = year;
+                option.textContent = year;
+                yearFilter.appendChild(option);
+            }
+        }
+    }
+    
+    filterTable(type) {
+        const searchInput = document.getElementById(`${type}Search`);
+        const filterSelect = document.getElementById(`${type}Filter`);
+        
+        if (!searchInput || !filterSelect) return;
+        
+        const searchTerm = searchInput.value.toLowerCase();
+        const filterValue = filterSelect.value;
+        
+        const rows = document.querySelectorAll(`#${type}Table tbody tr`);
+        let visibleCount = 0;
+        
+        rows.forEach(row => {
+            const description = row.cells[1].textContent.toLowerCase();
+            const category = row.cells[2].textContent.toLowerCase();
+            
+            const matchesSearch = description.includes(searchTerm);
+            const matchesFilter = !filterValue || category.includes(this.getCategoryName(filterValue).toLowerCase());
+            
+            const isVisible = matchesSearch && matchesFilter;
+            row.style.display = isVisible ? '' : 'none';
+            
+            if (isVisible) visibleCount++;
+        });
+        
+        // Show "no results" message if needed
+        const tableBody = document.querySelector(`#${type}Table tbody`);
+        let noResultsRow = tableBody.querySelector('.no-results');
+        
+        if (visibleCount === 0 && rows.length > 0) {
+            if (!noResultsRow) {
+                noResultsRow = document.createElement('tr');
+                noResultsRow.className = 'no-results';
+                noResultsRow.innerHTML = `<td colspan="6" class="text-center text-muted">Nenhum resultado encontrado</td>`;
+                tableBody.appendChild(noResultsRow);
+            }
+        } else if (noResultsRow) {
+            noResultsRow.remove();
+        }
+    }
+    
+    // Utility methods
+    formatDate(dateString) {
+        const date = new Date(dateString);
+        return date.toLocaleDateString('pt-BR');
+    }
+    
+    getCategoryName(category) {
+        const categories = {
+            salary: 'Salário',
+            freelance: 'Freelance',
+            investment: 'Investimento',
+            housing: 'Moradia',
+            food: 'Alimentação',
+            transport: 'Transporte',
+            health: 'Saúde',
+            education: 'Educação',
+            entertainment: 'Entretenimento',
+            bills: 'Boletos',
+            cards: 'Cartões',
+            other: 'Outros'
+        };
+        return categories[category] || category;
+    }
+    
+    getStatusText(status) {
+        const statuses = {
+            pending: 'Pendente',
+            paid: 'Pago',
+            received: 'Recebido'
+        };
+        return statuses[status] || status;
+    }
+    
+    saveData() {
+        localStorage.setItem('income', JSON.stringify(this.data.income));
+        localStorage.setItem('expenses', JSON.stringify(this.data.expenses));
+        localStorage.setItem('bills', JSON.stringify(this.data.bills));
+        localStorage.setItem('cards', JSON.stringify(this.data.cards));
+        
+        // Save to IndexedDB as backup
+        this.saveToDatabase('income', this.data.income);
+        this.saveToDatabase('expenses', this.data.expenses);
+        this.saveToDatabase('bills', this.data.bills);
+        this.saveToDatabase('cards', this.data.cards);
+    }
+    
+    // Action methods with improved error handling
+    deleteIncome(id) {
+        if (confirm('Tem certeza que deseja excluir esta receita?')) {
+            try {
+                this.data.income = this.data.income.filter(item => item.id !== id);
+                this.saveData();
+                this.updateIncomeTable();
+                this.loadDashboard();
+                this.showToast('Receita excluída com sucesso!');
+            } catch (error) {
+                console.error('Erro ao excluir receita:', error);
+                this.showToast('Erro ao excluir receita. Tente novamente.', 'error');
+            }
+        }
+    }
+    
+    deleteExpense(id) {
+        if (confirm('Tem certeza que deseja excluir esta despesa?')) {
+            try {
+                this.data.expenses = this.data.expenses.filter(item => item.id !== id);
+                this.saveData();
+                this.updateExpenseTable();
+                this.loadDashboard();
+                this.showToast('Despesa excluída com sucesso!');
+            } catch (error) {
+                console.error('Erro ao excluir despesa:', error);
+                this.showToast('Erro ao excluir despesa. Tente novamente.', 'error');
+            }
+        }
+    }
+    
+    deleteBill(id) {
+        if (confirm('Tem certeza que deseja excluir este boleto?')) {
+            try {
+                this.data.bills = this.data.bills.filter(item => item.id !== id);
+                this.saveData();
+                this.updateBillsTable();
+                this.loadDashboard();
+                this.showToast('Boleto excluído com sucesso!');
+            } catch (error) {
+                console.error('Erro ao excluir boleto:', error);
+                this.showToast('Erro ao excluir boleto. Tente novamente.', 'error');
+            }
+        }
+    }
+    
+    deleteCard(id) {
+        if (confirm('Tem certeza que deseja excluir esta transação?')) {
+            try {
+                this.data.cards = this.data.cards.filter(item => item.id !== id);
+                this.saveData();
+                this.updateCardsTable();
+                this.loadDashboard();
+                this.showToast('Transação de cartão excluída com sucesso!');
+            } catch (error) {
+                console.error('Erro ao excluir transação de cartão:', error);
+                this.showToast('Erro ao excluir transação de cartão. Tente novamente.', 'error');
+            }
+        }
+    }
+    
+    payBill(id) {
+        try {
+            const bill = this.data.bills.find(item => item.id === id);
+            if (bill) {
+                bill.status = 'paid';
+                bill.paidAt = new Date().toISOString();
+                this.saveData();
+                this.updateBillsTable();
+                this.loadDashboard();
+                this.showToast('Boleto marcado como pago!');
+            }
+        } catch (error) {
+            console.error('Erro ao marcar boleto como pago:', error);
+            this.showToast('Erro ao marcar boleto como pago. Tente novamente.', 'error');
+        }
+    }
+    
+    payCard(id) {
+        try {
+            const card = this.data.cards.find(item => item.id === id);
+            if (card) {
+                card.status = 'paid';
+                card.paidAt = new Date().toISOString();
+                this.saveData();
+                this.updateCardsTable();
+                this.loadDashboard();
+                this.showToast('Parcela de cartão marcada como paga!');
+            }
+        } catch (error) {
+            console.error('Erro ao marcar cartão como pago:', error);
+            this.showToast('Erro ao marcar cartão como pago. Tente novamente.', 'error');
+        }
+    }
+    
+    payFromUpcoming(type, id) {
+        if (type === 'bill') {
+            this.payBill(id);
+        } else if (type === 'card') {
+            this.payCard(id);
+        }
+        
+        // Refresh the upcoming items list
+        this.loadUpcomingItems();
+        
+        // Update dashboard
+        this.updateDashboardCards();
+    }
+    
+    loadUpcomingItems() {
+        const filter = document.getElementById('upcomingFilter').value;
+        const upcomingList = document.getElementById('upcomingList');
+        
+        if (!upcomingList) return;
+        
+        const today = new Date();
+        let filteredItems = [];
+        
+        // Get all pending bills and cards
+        const allItems = [
+            ...this.data.bills.filter(bill => bill.status === 'pending').map(bill => ({
+                ...bill,
+                type: 'bill',
+                date: bill.dueDate
+            })),
+            ...this.data.cards.filter(card => card.status === 'pending').map(card => ({
+                ...card,
+                type: 'card',
+                date: card.dueDate || card.date
+            }))
+        ];
+        
+        // Apply filter
+        allItems.forEach(item => {
+            const itemDate = new Date(item.date);
+            const diffTime = itemDate - today;
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            
+            item.daysUntil = diffDays;
+            item.isOverdue = diffDays < 0;
+            
+            switch(filter) {
+                case 'overdue':
+                    if (diffDays < 0) filteredItems.push(item);
+                    break;
+                case 'today':
+                    if (diffDays === 0) filteredItems.push(item);
+                    break;
+                case 'week':
+                    if (diffDays >= 0 && diffDays <= 7) filteredItems.push(item);
+                    break;
+                case 'month':
+                    if (diffDays >= 0 && diffDays <= 30) filteredItems.push(item);
+                    break;
+                default:
+                    filteredItems.push(item);
+            }
+        });
+        
+        // Sort by due date (overdue first, then by date)
+        filteredItems.sort((a, b) => {
+            if (a.isOverdue && !b.isOverdue) return -1;
+            if (!a.isOverdue && b.isOverdue) return 1;
+            return new Date(a.date) - new Date(b.date);
+        });
+        
+        // Render items
+        upcomingList.innerHTML = '';
+        
+        if (filteredItems.length === 0) {
+            upcomingList.innerHTML = '<div class="no-upcoming">Nenhum vencimento encontrado</div>';
+            return;
+        }
+        
+        filteredItems.forEach(item => {
+            const itemDiv = document.createElement('div');
+            itemDiv.className = `upcoming-item ${item.isOverdue ? 'overdue' : ''}`;
+            
+            const typeIcon = item.type === 'bill' ? 'fas fa-file-invoice' : 'fas fa-credit-card';
+            const typeText = item.type === 'bill' ? 'Boleto' : 'Cartão';
+            
+            let statusText = '';
+            if (item.isOverdue) {
+                statusText = `<span class="status-overdue">VENCIDO (${Math.abs(item.daysUntil)} dias)</span>`;
+            } else if (item.daysUntil === 0) {
+                statusText = '<span class="status-today">VENCE HOJE</span>';
+            } else {
+                statusText = `<span class="status-upcoming">Vence em ${item.daysUntil} dias</span>`;
+            }
+            
+            itemDiv.innerHTML = `
+                <div class="upcoming-item-content">
+                    <div class="upcoming-item-info">
+                        <div class="upcoming-item-header">
+                            <i class="${typeIcon}"></i>
+                            <span class="upcoming-item-type">${typeText}</span>
+                            ${statusText}
+                        </div>
+                        <div class="upcoming-item-description">${item.description}</div>
+                        <div class="upcoming-item-date">${this.formatDate(item.date)}</div>
+                    </div>
+                    <div class="upcoming-item-actions">
+                        <div class="upcoming-item-amount">R$ ${item.amount.toFixed(2)}</div>
+                        <button class="btn-pay" onclick="financeManager.payFromUpcoming('${item.type}', ${item.id})">
+                            <i class="fas fa-check"></i> Pagar
                         </button>
                     </div>
-                `;
-            }
-        }
-    }
-
-    addBillsSummary(bills) {
-        try {
-            const billsSection = document.getElementById('bills-section');
-            if (!billsSection) return;
-
-            // Remove existing summary
-            const existingSummary = billsSection.querySelector('.bills-summary');
-            if (existingSummary) {
-                existingSummary.remove();
-            }
-
-            const pendingBills = bills.filter(bill => bill.status === 'pending');
-            const overdueBills = bills.filter(bill => this.isBillOverdue(bill));
-            const paidBills = bills.filter(bill => bill.status === 'paid');
-            
-            const totalPending = pendingBills.reduce((sum, bill) => sum + bill.amount, 0);
-            const totalOverdue = overdueBills.reduce((sum, bill) => sum + bill.amount, 0);
-            const totalPaid = paidBills.reduce((sum, bill) => sum + bill.amount, 0);
-
-            const summaryDiv = document.createElement('div');
-            summaryDiv.className = 'bills-summary';
-            summaryDiv.innerHTML = `
-                <div class="summary-card neutral">
-                    <div class="summary-icon">
-                        <i class="fas fa-file-invoice"></i>
-                    </div>
-                    <div class="summary-value">${bills.length}</div>
-                    <div class="summary-label">Total de Boletos</div>
-                    <div class="summary-sublabel">Documentos cadastrados</div>
-                </div>
-                <div class="summary-card ${totalPending > 0 ? 'negative' : 'neutral'}">
-                    <div class="summary-icon">
-                        <i class="fas fa-clock"></i>
-                    </div>
-                    <div class="summary-value">R$ ${totalPending.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</div>
-                    <div class="summary-label">Pendentes</div>
-                    <div class="summary-sublabel">${pendingBills.length} boletos aguardando</div>
-                </div>
-                <div class="summary-card ${totalOverdue > 0 ? 'negative' : 'neutral'}">
-                    <div class="summary-icon">
-                        <i class="fas fa-exclamation-triangle"></i>
-                    </div>
-                    <div class="summary-value">R$ ${totalOverdue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</div>
-                    <div class="summary-label">Vencidos</div>
-                    <div class="summary-sublabel">${overdueBills.length} boletos em atraso</div>
-                </div>
-                <div class="summary-card ${totalPaid > 0 ? 'positive' : 'neutral'}">
-                    <div class="summary-icon">
-                        <i class="fas fa-check-circle"></i>
-                    </div>
-                    <div class="summary-value">R$ ${totalPaid.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</div>
-                    <div class="summary-label">Pagos</div>
-                    <div class="summary-sublabel">${paidBills.length} boletos quitados</div>
                 </div>
             `;
-
-            const billsList = document.getElementById('billsList');
-            if (billsList) {
-                billsList.insertAdjacentElement('beforebegin', summaryDiv);
+            
+            upcomingList.appendChild(itemDiv);
+        });
+    }
+    
+    closeModal(modalId) {
+        const modal = document.getElementById(modalId);
+        if (modal) {
+            modal.classList.remove('show');
+            setTimeout(() => {
+                modal.style.display = 'none';
+            }, 300);
+            
+            // Clear form errors
+            const formId = modalId.replace('Modal', 'Form');
+            this.clearFieldErrors(formId);
+            
+            // Reset form
+            const form = document.getElementById(formId);
+            if (form) {
+                form.reset();
             }
-        } catch (error) {
-            console.error('Erro ao adicionar resumo dos boletos:', error);
+        }
+    }
+    
+    openModal(modalId) {
+        const modal = document.getElementById(modalId);
+        if (modal) {
+            modal.style.display = 'block';
+            requestAnimationFrame(() => {
+                modal.classList.add('show');
+            });
         }
     }
 
-    async exportFinancialData() {
-        try {
-            this.showLoadingOverlay('Exportando dados...');
-            
-            const exportData = await this.storageManager.exportData();
-            const blob = new Blob([JSON.stringify(exportData, null, 2)], { 
-                type: 'application/json' 
+    openIncomeModal() {
+        this.openModal('incomeModal');
+        document.getElementById('incomeDate').value = new Date().toISOString().split('T')[0];
+    }
+
+    openExpenseModal() {
+        this.openModal('expenseModal');
+        document.getElementById('expenseDate').value = new Date().toISOString().split('T')[0];
+    }
+
+    openBillModal() {
+        this.openModal('billModal');
+        document.getElementById('billDueDate').value = new Date().toISOString().split('T')[0];
+    }
+
+    openCardModal() {
+        this.openModal('cardModal');
+        document.getElementById('cardDate').value = new Date().toISOString().split('T')[0];
+    }
+
+    openUpcomingModal() {
+        this.openModal('upcomingModal');
+        this.loadUpcomingItems();
+    }
+
+    exportReport() {
+        this.exportData();
+    }
+
+    setupMobileMenu() {
+        const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+        const sidebar = document.getElementById('sidebar');
+        
+        if (mobileMenuToggle && sidebar) {
+            mobileMenuToggle.addEventListener('click', () => {
+                sidebar.classList.toggle('open');
+                const isOpen = sidebar.classList.contains('open');
+                mobileMenuToggle.setAttribute('aria-label', isOpen ? 'Fechar menu' : 'Abrir menu');
+                mobileMenuToggle.innerHTML = `<i class="fas fa-${isOpen ? 'times' : 'bars'}"></i>`;
             });
             
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `financeai-export-${new Date().toISOString().split('T')[0]}.json`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-            
-            this.hideLoadingOverlay();
-            this.showToast('Dados exportados com sucesso!', 'success');
-        } catch (error) {
-            this.hideLoadingOverlay();
-            console.error('Erro ao exportar dados:', error);
-            this.showToast('Erro ao exportar dados: ' + error.message, 'error');
-        }
-    }
-
-    async importFinancialData() {
-        try {
-            const input = document.createElement('input');
-            input.type = 'file';
-            input.accept = '.json';
-            
-            input.onchange = async (event) => {
-                const file = event.target.files[0];
-                if (!file) return;
-                
-                try {
-                    this.showLoadingOverlay('Importando dados...');
-                    
-                    const text = await this.readFileAsText(file);
-                    const importData = JSON.parse(text);
-                    
-                    // Validate import data structure
-                    if (!importData || typeof importData !== 'object') {
-                        throw new Error('Arquivo inválido');
-                    }
-                    
-                    // Confirm import
-                    if (!confirm('Importar dados irá substituir todos os dados atuais. Deseja continuar?')) {
-                        this.hideLoadingOverlay();
-                        return;
-                    }
-                    
-                    await this.storageManager.importData(importData);
-                    await this.loadData();
-                    
-                    // Re-render all sections
-                    this.renderDashboard();
-                    this.renderBills();
-                    this.renderInvoices();
-                    this.renderRevenues();
-                    
-                    this.hideLoadingOverlay();
-                    this.showToast('Dados importados com sucesso!', 'success');
-                } catch (error) {
-                    this.hideLoadingOverlay();
-                    console.error('Erro ao importar dados:', error);
-                    this.showToast('Erro ao importar dados: ' + error.message, 'error');
+            // Close sidebar when clicking outside
+            document.addEventListener('click', (e) => {
+                if (!sidebar.contains(e.target) && !mobileMenuToggle.contains(e.target) && window.innerWidth <= 768) {
+                    sidebar.classList.remove('open');
+                    mobileMenuToggle.setAttribute('aria-label', 'Abrir menu');
+                    mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
                 }
-            };
-            
-            input.click();
-        } catch (error) {
-            console.error('Erro ao importar dados:', error);
-            this.showToast('Erro ao importar dados', 'error');
+            });
         }
     }
 
-    readFileAsText(file) {
-        return new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = e => resolve(e.target.result);
-            reader.onerror = () => reject(new Error('Erro ao ler arquivo'));
-            reader.readAsText(file);
+    setupAccessibility() {
+        // Add ARIA labels to interactive elements
+        document.querySelectorAll('button:not([aria-label])').forEach(button => {
+            const text = button.textContent || button.getAttribute('title') || 'Botão';
+            button.setAttribute('aria-label', text.trim());
+        });
+        
+        // Add role attributes to tables
+        document.querySelectorAll('table').forEach(table => {
+            table.setAttribute('role', 'table');
+        });
+        
+        // Add keyboard navigation for charts
+        document.querySelectorAll('canvas').forEach(canvas => {
+            canvas.setAttribute('tabindex', '0');
+            canvas.setAttribute('role', 'img');
         });
     }
 
-    scheduleNotifications() {
-        try {
-            // Check for notifications every hour
-            setInterval(() => {
-                this.checkAndSendNotifications();
-            }, 3600000); // 1 hour
-            
-            // Initial check after 30 seconds
+    setupErrorHandling() {
+        // Global error handler
+        window.addEventListener('error', (event) => {
+            console.error('Global error:', event.error);
+            this.handleError(event.error, 'Erro inesperado do sistema');
+        });
+        
+        // Promise rejection handler
+        window.addEventListener('unhandledrejection', (event) => {
+            console.error('Unhandled promise rejection:', event.reason);
+            this.handleError(event.reason, 'Erro de processamento');
+        });
+    }
+
+    handleInitializationError(error) {
+        this.showToast('Erro ao inicializar o sistema. Tentando novamente...', 'error');
+        
+        if (this.retryAttempts < this.maxRetryAttempts) {
+            this.retryAttempts++;
             setTimeout(() => {
-                this.checkAndSendNotifications();
-            }, 30000);
-        } catch (error) {
-            console.error('Erro ao agendar notificações:', error);
+                this.init();
+            }, 1000 * this.retryAttempts);
+        } else {
+            this.showToast('Falha na inicialização. Recarregue a página.', 'error');
         }
     }
 
-    async checkAndSendNotifications() {
-        try {
-            if (!this.settings.emailEnabled || !this.settings.emailAddress) {
-                return;
-            }
-
-            const now = new Date();
-            const upcomingBills = this.bills.filter(bill => {
-                if (!bill || bill.status !== 'pending' || !bill.dueDate) return false;
-                
-                const dueDate = new Date(bill.dueDate);
-                if (isNaN(dueDate.getTime())) return false;
-                
-                const daysDiff = Math.ceil((dueDate - now) / (1000 * 60 * 60 * 24));
-                return daysDiff <= this.settings.reminderDays && daysDiff >= 0;
-            });
-
-            const overdueBills = this.bills.filter(bill => this.isBillOverdue(bill));
-
-            if (upcomingBills.length > 0 || overdueBills.length > 0) {
-                await this.emailIntegration.sendBulkReminders(
-                    [...upcomingBills, ...overdueBills], 
-                    this.settings.emailAddress
-                );
-            }
-        } catch (error) {
-            console.error('Erro ao verificar e enviar notificações:', error);
-        }
-    }
-
-    isBillOverdue(bill) {
-        try {
-            if (!bill || bill.status !== 'pending' || !bill.dueDate) return false;
-            const dueDate = new Date(bill.dueDate);
-            const today = new Date();
-            today.setHours(0, 0, 0, 0);
-            return dueDate < today;
-        } catch (error) {
-            return false;
-        }
-    }
-
-    getDaysUntilDue(dateString) {
-        try {
-            if (!dateString) return null;
-            const dueDate = new Date(dateString);
-            const today = new Date();
-            today.setHours(0, 0, 0, 0);
-            dueDate.setHours(0, 0, 0, 0);
-            return Math.ceil((dueDate - today) / (1000 * 60 * 60 * 24));
-        } catch (error) {
-            return null;
-        }
-    }
-
-    getStatusText(status) {
-        const statusMap = {
-            'pending': 'Pendente',
-            'paid': 'Pago',
-            'overdue': 'Vencido'
+    handleError(error, userMessage) {
+        console.error('Error handled:', error);
+        
+        // Log error for debugging
+        const errorLog = {
+            timestamp: new Date().toISOString(),
+            error: error.message,
+            stack: error.stack,
+            url: window.location.href,
+            userAgent: navigator.userAgent
         };
-        return statusMap[status] || status;
-    }
-
-    getCategoryText(category) {
-        const categoryMap = {
-            'utilities': 'Utilidades',
-            'rent': 'Aluguel',
-            'insurance': 'Seguro',
-            'taxes': 'Impostos',
-            'supplies': 'Suprimentos',
-            'services': 'Serviços',
-            'equipment': 'Equipamentos',
-            'sales': 'Vendas',
-            'freelance': 'Freelance',
-            'investments': 'Investimentos',
-            'rental': 'Aluguel',
-            'other': 'Outros'
-        };
-        return categoryMap[category] || category;
-    }
-
-    formatDate(dateString) {
-        try {
-            if (!dateString) return 'Data inválida';
-            const date = new Date(dateString);
-            if (isNaN(date.getTime())) return 'Data inválida';
-            return date.toLocaleDateString('pt-BR');
-        } catch (error) {
-            return 'Data inválida';
-        }
-    }
-
-    formatRelativeTime(timestamp) {
-        try {
-            if (!timestamp) return 'Data inválida';
-            
-            const date = new Date(timestamp);
-            if (isNaN(date.getTime())) return 'Data inválida';
-            
-            const now = new Date();
-            const diffInSeconds = Math.floor((now - date) / 1000);
-            
-            if (diffInSeconds < 60) {
-                return 'Agora mesmo';
-            } else if (diffInSeconds < 3600) {
-                const minutes = Math.floor(diffInSeconds / 60);
-                return `${minutes} minuto${minutes > 1 ? 's' : ''} atrás`;
-            } else if (diffInSeconds < 86400) {
-                const hours = Math.floor(diffInSeconds / 3600);
-                return `${hours} hora${hours > 1 ? 's' : ''} atrás`;
-            } else if (diffInSeconds < 2592000) {
-                const days = Math.floor(diffInSeconds / 86400);
-                return `${days} dia${days > 1 ? 's' : ''} atrás`;
-            } else {
-                return date.toLocaleDateString('pt-BR');
-            }
-        } catch (error) {
-            return 'Data inválida';
-        }
-    }
-
-    addBillFilters() {
-        try {
-            const filters = document.getElementById('billsFilters');
-            if (!filters) return;
-
-            // Clear existing filters
-            filters.innerHTML = '';
-            
-            // Add filter buttons
-            const filterButtons = document.createElement('div');
-            filterButtons.className = 'filter-buttons';
-            
-            // Add status filter
-            const statusFilter = document.createElement('div');
-            statusFilter.className = 'filter-group';
-            
-            const statusOptions = ['pending', 'paid', 'overdue'];
-            statusOptions.forEach(status => {
-                const button = document.createElement('button');
-                button.className = `filter-button ${status === 'pending' ? 'active' : ''}`;
-                button.textContent = this.getStatusText(status);
-                button.onclick = () => this.applyBillFilter(status);
-                statusFilter.appendChild(button);
-            });
-            
-            filterButtons.appendChild(statusFilter);
-            
-            // Add category filter
-            const categoryFilter = document.createElement('div');
-            categoryFilter.className = 'filter-group';
-            
-            const categoryOptions = ['utilities', 'rent', 'insurance', 'taxes', 'supplies', 'services', 'equipment', 'sales', 'freelance', 'investments', 'rental', 'other'];
-            categoryOptions.forEach(category => {
-                const button = document.createElement('button');
-                button.className = `filter-button ${this.settings.showPaidBills ? 'active' : ''}`;
-                button.textContent = this.getCategoryText(category);
-                button.onclick = () => this.applyBillFilter(category);
-                categoryFilter.appendChild(button);
-            });
-            
-            filterButtons.appendChild(categoryFilter);
-            
-            filters.appendChild(filterButtons);
-        } catch (error) {
-            console.error('Erro ao adicionar filtros de boletos:', error);
-        }
-    }
-
-    applyBillFilter(filterType) {
-        try {
-            // Filter bills based on status or category
-            if (['pending', 'paid', 'overdue'].includes(filterType)) {
-                this.settings.showPaidBills = filterType === 'paid';
-                this.renderBills();
-            } else {
-                // Filter by category
-                this.bills = this.bills.filter(bill => {
-                    if (!bill || !bill.category) return false;
-                    return this.getCategoryText(bill.category) === filterType;
-                });
-                this.renderBills();
-            }
-        } catch (error) {
-            console.error('Erro ao aplicar filtro:', error);
-        }
-    }
-
-    renderInvoices() {
-        try {
-            const invoicesList = document.getElementById('invoicesList');
-            if (!invoicesList) return;
-
-            if (!Array.isArray(this.invoices) || this.invoices.length === 0) {
-                invoicesList.innerHTML = `
-                    <div class="empty-state">
-                        <i class="fas fa-receipt"></i>
-                        <p>Nenhuma nota fiscal encontrada.</p>
-                        <small style="margin-top: 0.5rem; display: block; opacity: 0.7;">
-                            Use o botão "Adicionar Nota" para começar
-                        </small>
-                    </div>
-                `;
-                return;
-            }
-
-            // Sort invoices by date (most recent first)
-            const sortedInvoices = [...this.invoices].sort((a, b) => {
-                const dateA = new Date(a.createdAt || a.date);
-                const dateB = new Date(b.createdAt || b.date);
-                return dateB - dateA;
-            });
-
-            invoicesList.innerHTML = sortedInvoices.map(invoice => {
-                if (!this.validateInvoiceData(invoice)) return '';
-                
-                const isReceived = invoice.status === 'received';
-                const isPending = invoice.status === 'pending';
-                
-                return `
-                    <div class="invoice-item ${this.settings.compactView ? 'compact' : ''} ${isReceived ? 'received' : ''}" data-invoice-id="${invoice.id}">
-                        <div class="item-header">
-                            <h3 class="item-title ${isReceived ? 'text-success' : ''}">${invoice.number ? 'NF ' + this.escapeHtml(invoice.number) : 'Nota Fiscal'}</h3>
-                            <span class="item-status status-${invoice.status || 'pending'}">
-                                ${invoice.status === 'received' ? 'Recebida' : 'Pendente'}
-                            </span>
-                        </div>
-                        ${!this.settings.compactView ? `
-                            <div class="item-details">
-                                <div class="detail-item">
-                                    <span class="detail-label">Fornecedor</span>
-                                    <span class="detail-value">${this.escapeHtml(invoice.supplier)}</span>
-                                </div>
-                                <div class="detail-item">
-                                    <span class="detail-label">Valor</span>
-                                    <span class="detail-value amount ${isReceived ? 'text-success' : ''}">R$ ${invoice.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
-                                </div>
-                                <div class="detail-item">
-                                    <span class="detail-label">Data</span>
-                                    <span class="detail-value">${this.formatDate(invoice.date)}</span>
-                                </div>
-                                <div class="detail-item">
-                                    <span class="detail-label">Categoria</span>
-                                    <span class="detail-value">${this.getCategoryText(invoice.category)}</span>
-                                </div>
-                                ${isReceived && invoice.receivedAt ? `
-                                    <div class="detail-item">
-                                        <span class="detail-label">Recebida em</span>
-                                        <span class="detail-value text-success">${this.formatDate(invoice.receivedAt)}</span>
-                                    </div>
-                                ` : ''}
-                            </div>
-                        ` : `
-                            <div class="compact-details">
-                                <span class="compact-amount ${isReceived ? 'text-success' : ''}">R$ ${invoice.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
-                                <span class="compact-date">${this.formatDate(invoice.date)}</span>
-                            </div>
-                        `}
-                        <div class="item-actions">
-                            ${isPending ? `
-                                <button class="btn-sm btn-success" onclick="financeAI.markInvoiceAsReceived('${invoice.id}')">
-                                    <i class="fas fa-check"></i> Receber
-                                </button>
-                                <button class="btn-sm btn-warning" onclick="financeAI.editInvoice('${invoice.id}')">
-                                    <i class="fas fa-edit"></i> Editar
-                                </button>
-                                <button class="btn-sm btn-danger" onclick="financeAI.deleteInvoice('${invoice.id}')">
-                                    <i class="fas fa-trash"></i> Excluir
-                                </button>
-                            ` : `
-                                <span class="text-success" style="font-size: 0.875rem; font-weight: 500;">
-                                    <i class="fas fa-check-circle"></i> Nota fiscal recebida
-                                </span>
-                                <button class="btn-sm btn-warning" onclick="financeAI.editInvoice('${invoice.id}')">
-                                    <i class="fas fa-edit"></i> Editar
-                                </button>
-                                <button class="btn-sm btn-danger" onclick="financeAI.deleteInvoice('${invoice.id}')">
-                                    <i class="fas fa-trash"></i> Excluir
-                                </button>
-                            `}
-                        </div>
-                    </div>
-                `;
-            }).filter(html => html).join('');
-
-        } catch (error) {
-            console.error('Erro ao renderizar notas fiscais:', error);
-            const invoicesList = document.getElementById('invoicesList');
-            if (invoicesList) {
-                invoicesList.innerHTML = `
-                    <div class="error-state">
-                        <i class="fas fa-exclamation-triangle"></i>
-                        <p>Erro ao carregar notas fiscais.</p>
-                        <button class="btn btn-primary" onclick="financeAI.renderInvoices()" style="margin-top: 1rem;">
-                            <i class="fas fa-refresh"></i> Tentar Novamente
-                        </button>
-                    </div>
-                `;
-            }
-        }
-    }
-
-    async markInvoiceAsReceived(invoiceId) {
-        try {
-            const invoice = this.invoices.find(i => i.id == invoiceId);
-            if (!invoice) {
-                this.showToast('Nota fiscal não encontrada', 'error');
-                return;
-            }
-            
-            if (invoice.status === 'received') {
-                this.showToast('Nota fiscal já está marcada como recebida', 'warning');
-                return;
-            }
-            
-            invoice.status = 'received';
-            invoice.receivedAt = new Date().toISOString();
-            invoice.updatedAt = new Date().toISOString();
-            
-            await this.saveData();
-            this.renderInvoices();
-            this.renderDashboard();
-            this.showToast(`Nota fiscal "${invoice.number}" marcada como recebida!`, 'success');
-            
-        } catch (error) {
-            console.error('Erro ao marcar nota fiscal como recebida:', error);
-            this.showToast('Erro ao marcar nota fiscal como recebida', 'error');
-        }
-    }
-
-    editInvoice(invoiceId) {
-        try {
-            const invoice = this.invoices.find(i => i.id == invoiceId);
-            if (!invoice) {
-                this.showToast('Nota fiscal não encontrada', 'error');
-                return;
-            }
-            
-            // Set editing mode
-            this.editingInvoiceId = invoiceId;
-            
-            // Fill form with invoice data
-            document.getElementById('invoiceNumber').value = invoice.number || '';
-            document.getElementById('invoiceSupplier').value = invoice.supplier || '';
-            document.getElementById('invoiceAmount').value = invoice.amount || '';
-            document.getElementById('invoiceDate').value = invoice.date || '';
-            document.getElementById('invoiceCategory').value = invoice.category || '';
-            document.getElementById('invoiceStatus').value = invoice.status || '';
-            
-            // Open modal
-            openAddInvoiceModal();
-            
-        } catch (error) {
-            console.error('Erro ao editar nota fiscal:', error);
-            this.showToast('Erro ao carregar dados da nota fiscal', 'error');
-        }
-    }
-
-    async deleteInvoice(invoiceId) {
-        try {
-            const invoice = this.invoices.find(i => i.id == invoiceId);
-            if (!invoice) {
-                this.showToast('Nota fiscal não encontrada', 'error');
-                return;
-            }
-            
-            if (!confirm(`Tem certeza que deseja excluir a nota fiscal "${invoice.number}"?`)) {
-                return;
-            }
-            
-            this.invoices = this.invoices.filter(i => i.id != invoiceId);
-            await this.saveData();
-            this.renderInvoices();
-            this.renderDashboard();
-            this.showToast('Nota fiscal excluída com sucesso!', 'success');
-            
-        } catch (error) {
-            console.error('Erro ao excluir nota fiscal:', error);
-            this.showToast('Erro ao excluir nota fiscal', 'error');
-        }
-    }
-
-    renderRevenues() {
-        try {
-            const revenuesList = document.getElementById('revenuesList');
-            if (!revenuesList) return;
-
-            if (!Array.isArray(this.revenues) || this.revenues.length === 0) {
-                revenuesList.innerHTML = `
-                    <div class="empty-state">
-                        <i class="fas fa-coins"></i>
-                        <p>Nenhuma receita encontrada.</p>
-                        <small style="margin-top: 0.5rem; display: block; opacity: 0.7;">
-                            Use o botão "Adicionar Receita" para começar
-                        </small>
-                    </div>
-                `;
-                return;
-            }
-
-            // Sort revenues by date (most recent first)
-            const sortedRevenues = [...this.revenues].sort((a, b) => {
-                const dateA = new Date(a.date);
-                const dateB = new Date(b.date);
-                return dateB - dateA;
-            });
-
-            revenuesList.innerHTML = sortedRevenues.map(revenue => {
-                if (!this.validateRevenueData(revenue)) return '';
-                
-                return `
-                    <div class="invoice-item ${this.settings.compactView ? 'compact' : ''}" data-revenue-id="${revenue.id}">
-                        <div class="item-header">
-                            <h3 class="item-title text-success">${this.escapeHtml(revenue.description)}</h3>
-                            <span class="item-status status-paid">
-                                Receita
-                            </span>
-                        </div>
-                        ${!this.settings.compactView ? `
-                            <div class="item-details">
-                                <div class="detail-item">
-                                    <span class="detail-label">Valor</span>
-                                    <span class="detail-value amount text-success">R$ ${revenue.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
-                                </div>
-                                <div class="detail-item">
-                                    <span class="detail-label">Data</span>
-                                    <span class="detail-value">${this.formatDate(revenue.date)}</span>
-                                </div>
-                                <div class="detail-item">
-                                    <span class="detail-label">Categoria</span>
-                                    <span class="detail-value">${this.getCategoryText(revenue.category)}</span>
-                                </div>
-                                ${revenue.source ? `
-                                    <div class="detail-item">
-                                        <span class="detail-label">Fonte</span>
-                                        <span class="detail-value">${this.escapeHtml(revenue.source)}</span>
-                                    </div>
-                                ` : ''}
-                            </div>
-                        ` : `
-                            <div class="compact-details">
-                                <span class="compact-amount text-success">R$ ${revenue.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
-                                <span class="compact-date">${this.formatDate(revenue.date)}</span>
-                            </div>
-                        `}
-                        ${revenue.notes ? `
-                            <div style="margin: 0.5rem 0; padding: 0.5rem; background: var(--background-color); border-radius: 4px; font-size: 0.875rem; color: var(--text-secondary);">
-                                <strong>Observações:</strong> ${this.escapeHtml(revenue.notes)}
-                            </div>
-                        ` : ''}
-                        <div class="item-actions">
-                            <button class="btn-sm btn-warning" onclick="financeAI.editRevenue('${revenue.id}')">
-                                <i class="fas fa-edit"></i> Editar
-                            </button>
-                            <button class="btn-sm btn-danger" onclick="financeAI.deleteRevenue('${revenue.id}')">
-                                <i class="fas fa-trash"></i> Excluir
-                            </button>
-                        </div>
-                    </div>
-                `;
-            }).filter(html => html).join('');
-
-        } catch (error) {
-            console.error('Erro ao renderizar receitas:', error);
-            const revenuesList = document.getElementById('revenuesList');
-            if (revenuesList) {
-                revenuesList.innerHTML = `
-                    <div class="error-state">
-                        <i class="fas fa-exclamation-triangle"></i>
-                        <p>Erro ao carregar receitas.</p>
-                        <button class="btn btn-primary" onclick="financeAI.renderRevenues()" style="margin-top: 1rem;">
-                            <i class="fas fa-refresh"></i> Tentar Novamente
-                        </button>
-                    </div>
-                `;
-            }
-        }
-    }
-
-    editRevenue(revenueId) {
-        try {
-            const revenue = this.revenues.find(r => r.id == revenueId);
-            if (!revenue) {
-                this.showToast('Receita não encontrada', 'error');
-                return;
-            }
-            
-            // Set editing mode
-            this.editingRevenueId = revenueId;
-            
-            // Fill form with revenue data
-            document.getElementById('revenueDescription').value = revenue.description || '';
-            document.getElementById('revenueAmount').value = revenue.amount || '';
-            document.getElementById('revenueDate').value = revenue.date || '';
-            document.getElementById('revenueCategory').value = revenue.category || '';
-            document.getElementById('revenueSource').value = revenue.source || '';
-            document.getElementById('revenueNotes').value = revenue.notes || '';
-            
-            // Open modal
-            openAddRevenueModal();
-            
-        } catch (error) {
-            console.error('Erro ao editar receita:', error);
-            this.showToast('Erro ao carregar dados da receita', 'error');
-        }
-    }
-
-    async deleteRevenue(revenueId) {
-        try {
-            const revenue = this.revenues.find(r => r.id == revenueId);
-            if (!revenue) {
-                this.showToast('Receita não encontrada', 'error');
-                return;
-            }
-            
-            if (!confirm(`Tem certeza que deseja excluir a receita "${revenue.description}"?`)) {
-                return;
-            }
-            
-            this.revenues = this.revenues.filter(r => r.id != revenueId);
-            await this.saveData();
-            this.renderRevenues();
-            this.renderDashboard();
-            this.showToast('Receita excluída com sucesso!', 'success');
-            
-        } catch (error) {
-            console.error('Erro ao excluir receita:', error);
-            this.showToast('Erro ao excluir receita', 'error');
-        }
-    }
-
-    renderNotifications() {
-        try {
-            const notificationsList = document.getElementById('notificationsList');
-            if (!notificationsList) return;
-
-            // Generate notifications
-            const notifications = this.generateNotifications();
-
-            if (notifications.length === 0) {
-                notificationsList.innerHTML = `
-                    <div class="empty-state">
-                        <i class="fas fa-bell"></i>
-                        <p>Nenhuma notificação no momento.</p>
-                        <small style="margin-top: 0.5rem; display: block; opacity: 0.7;">
-                            Você será notificado sobre vencimentos e atualizações importantes
-                        </small>
-                    </div>
-                `;
-                return;
-            }
-
-            notificationsList.innerHTML = notifications.map(notification => `
-                <div class="notification-item ${notification.type}">
-                    <div class="notification-header">
-                        <span class="notification-title">${notification.title}</span>
-                        <span class="notification-time">${this.formatRelativeTime(notification.time)}</span>
-                    </div>
-                    <div class="notification-message">${notification.message}</div>
-                </div>
-            `).join('');
-
-            // Update notification count in header
-            const notificationCount = document.querySelector('.notification-count');
-            if (notificationCount) {
-                notificationCount.textContent = notifications.length;
-                notificationCount.style.display = notifications.length > 0 ? 'block' : 'none';
-            }
-
-        } catch (error) {
-            console.error('Erro ao renderizar notificações:', error);
-        }
-    }
-
-    generateNotifications() {
-        try {
-            const notifications = [];
-            const now = new Date();
-
-            // Check for overdue bills
-            const overdueBills = this.bills.filter(bill => this.isBillOverdue(bill));
-            if (overdueBills.length > 0) {
-                notifications.push({
-                    type: 'danger',
-                    title: 'Boletos Vencidos',
-                    message: `${overdueBills.length} boletos estão vencidos. Verifique e efetue os pagamentos para evitar juros.`,
-                    time: now.toISOString()
-                });
-            }
-
-            // Check for upcoming bills
-            const upcomingBills = this.bills.filter(bill => {
-                if (!bill || bill.status !== 'pending') return false;
-                const daysUntil = this.getDaysUntilDue(bill.dueDate);
-                return daysUntil > 0 && daysUntil <= 3;
-            });
-
-            if (upcomingBills.length > 0) {
-                notifications.push({
-                    type: 'warning',
-                    title: 'Vencimentos Próximos',
-                    message: `${upcomingBills.length} boletos vencem nos próximos 3 dias. Organize-se para os pagamentos.`,
-                    time: now.toISOString()
-                });
-            }
-
-            // Check for high monthly expenses
-            const currentMonth = now.getMonth();
-            const currentYear = now.getFullYear();
-            const monthlyExpenses = [...this.bills, ...this.invoices]
-                .filter(item => {
-                    if (!item) return false;
-                    const date = new Date(item.dueDate || item.date);
-                    return date.getMonth() === currentMonth && date.getFullYear() === currentYear;
-                })
-                .reduce((sum, item) => sum + (item.amount || 0), 0);
-
-            if (monthlyExpenses > 10000) {
-                notifications.push({
-                    type: 'info',
-                    title: 'Alto Volume de Gastos',
-                    message: `Seus gastos deste mês totalizam R$ ${monthlyExpenses.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}. Monitore seus gastos.`,
-                    time: now.toISOString()
-                });
-            }
-
-            return notifications.sort((a, b) => new Date(b.time) - new Date(a.time));
-
-        } catch (error) {
-            console.error('Erro ao gerar notificações:', error);
-            return [];
-        }
-    }
-
-    renderSettings() {
-        try {
-            // Update storage info
-            this.updateStorageInfo();
-            this.updateBackupInfo();
-            
-            // Load current settings into form
-            const autoBackup = document.getElementById('autoBackup');
-            if (autoBackup) {
-                autoBackup.checked = this.settings.autoBackup;
-            }
-            
-            const defaultReportPeriod = document.getElementById('defaultReportPeriod');
-            if (defaultReportPeriod) {
-                defaultReportPeriod.value = this.settings.defaultReportPeriod;
-            }
-            
-            const showPaidBills = document.getElementById('showPaidBills');
-            if (showPaidBills) {
-                showPaidBills.checked = this.settings.showPaidBills;
-            }
-            
-            const compactView = document.getElementById('compactView');
-            if (compactView) {
-                compactView.checked = this.settings.compactView;
-            }
-
-        } catch (error) {
-            console.error('Erro ao renderizar configurações:', error);
-        }
-    }
-
-    async updateStorageInfo() {
-        try {
-            const storageInfo = await this.storageManager.getStorageInfo();
-            
-            const storageTypeElement = document.getElementById('storageType');
-            const documentCountElement = document.getElementById('documentCount');
-            
-            if (storageTypeElement) {
-                storageTypeElement.textContent = storageInfo.storageType;
-            }
-            
-            if (documentCountElement) {
-                const totalDocs = storageInfo.bills + storageInfo.invoices + storageInfo.revenues;
-                documentCountElement.textContent = totalDocs;
-            }
-
-        } catch (error) {
-            console.error('Erro ao atualizar informações de armazenamento:', error);
-        }
-    }
-
-    loadDatabaseSettings() {
-        try {
-            const storageMode = this.storageManager.getStorageMode();
-            const mysqlConfig = this.storageManager.getMySQLConfig();
-            
-            // Update storage mode selector
-            const storageModeSelect = document.getElementById('storageMode');
-            if (storageModeSelect) {
-                storageModeSelect.value = storageMode;
-                this.onStorageModeChange(); // Update UI based on current mode
-            }
-            
-            // Load MySQL settings if available
-            if (mysqlConfig) {
-                const fields = ['mysqlHost', 'mysqlPort', 'mysqlDatabase', 'mysqlUsername', 'mysqlPassword'];
-                fields.forEach(field => {
-                    const element = document.getElementById(field);
-                    if (element && mysqlConfig[field.replace('mysql', '').toLowerCase()]) {
-                        element.value = mysqlConfig[field.replace('mysql', '').toLowerCase()];
-                    }
-                });
-                
-                // Update status
-                this.updateMySQLStatus(true, 'Configurado');
-            }
-
-        } catch (error) {
-            console.error('Erro ao carregar configurações de banco:', error);
-        }
-    }
-
-    onStorageModeChange() {
-        try {
-            const storageMode = document.getElementById('storageMode').value;
-            const mysqlSettings = document.getElementById('mysqlSettings');
-            
-            if (mysqlSettings) {
-                mysqlSettings.style.display = storageMode === 'mysql' ? 'block' : 'none';
-            }
-
-        } catch (error) {
-            console.error('Erro ao alterar modo de armazenamento:', error);
-        }
-    }
-
-    async testMySQLConnection() {
-        try {
-            const host = document.getElementById('mysqlHost').value;
-            const port = document.getElementById('mysqlPort').value;
-            const database = document.getElementById('mysqlDatabase').value;
-            const username = document.getElementById('mysqlUsername').value;
-            const password = document.getElementById('mysqlPassword').value;
-            
-            if (!host || !database || !username) {
-                this.showToast('Preencha todos os campos obrigatórios', 'error');
-                return;
-            }
-            
-            this.updateMySQLStatus(false, 'Testando conexão...');
-            
-            const config = { host, port, database, username, password };
-            const result = await this.storageManager.testMySQLConnection(config);
-            
-            if (result.success) {
-                this.updateMySQLStatus(true, result.message);
-                document.getElementById('saveMySQLBtn').disabled = false;
-                this.showToast('Conexão testada com sucesso!', 'success');
-            } else {
-                this.updateMySQLStatus(false, result.message);
-                document.getElementById('saveMySQLBtn').disabled = true;
-                this.showToast('Erro na conexão: ' + result.message, 'error');
-            }
-
-        } catch (error) {
-            this.updateMySQLStatus(false, 'Erro no teste de conexão');
-            document.getElementById('saveMySQLBtn').disabled = true;
-            console.error('Erro ao testar conexão MySQL:', error);
-            this.showToast('Erro ao testar conexão', 'error');
-        }
-    }
-
-    updateMySQLStatus(connected, message) {
-        try {
-            const statusIndicator = document.getElementById('mysqlStatusIndicator');
-            if (statusIndicator) {
-                if (connected) {
-                    statusIndicator.innerHTML = '<i class="fas fa-circle text-success"></i> ' + message;
-                } else {
-                    statusIndicator.innerHTML = '<i class="fas fa-circle text-danger"></i> ' + message;
-                }
-            }
-        } catch (error) {
-            console.error('Erro ao atualizar status MySQL:', error);
-        }
-    }
-
-    async saveMySQLConfig() {
-        try {
-            const host = document.getElementById('mysqlHost').value;
-            const port = document.getElementById('mysqlPort').value;
-            const database = document.getElementById('mysqlDatabase').value;
-            const username = document.getElementById('mysqlUsername').value;
-            const password = document.getElementById('mysqlPassword').value;
-            
-            this.showLoadingOverlay('Migrando para MySQL...');
-            
-            const config = { host, port, database, username, password };
-            await this.storageManager.setStorageMode('mysql', config);
-            
-            this.hideLoadingOverlay();
-            this.updateStorageInfo();
-            this.showToast('Migração para MySQL concluída!', 'success');
-            
-        } catch (error) {
-            this.hideLoadingOverlay();
-            console.error('Erro ao salvar configuração MySQL:', error);
-            this.showToast('Erro na migração: ' + error.message, 'error');
-        }
-    }
-
-    async switchToLocal() {
-        try {
-            if (!confirm('Tem certeza que deseja voltar ao armazenamento local? Os dados do MySQL serão migrados.')) {
-                return;
-            }
-            
-            this.showLoadingOverlay('Migrando para armazenamento local...');
-            
-            await this.storageManager.setStorageMode('local');
-            
-            // Reset MySQL form
-            const mysqlFields = ['mysqlHost', 'mysqlPort', 'mysqlDatabase', 'mysqlUsername', 'mysqlPassword'];
-            mysqlFields.forEach(field => {
-                const element = document.getElementById(field);
-                if (element) element.value = '';
-            });
-            
-            document.getElementById('storageMode').value = 'local';
-            this.onStorageModeChange();
-            
-            this.hideLoadingOverlay();
-            this.updateStorageInfo();
-            this.showToast('Migração para armazenamento local concluída!', 'success');
-            
-        } catch (error) {
-            this.hideLoadingOverlay();
-            console.error('Erro ao migrar para local:', error);
-            this.showToast('Erro na migração: ' + error.message, 'error');
-        }
+        
+        localStorage.setItem('lastError', JSON.stringify(errorLog));
+        
+        this.showToast(userMessage || 'Ocorreu um erro. Tente novamente.', 'error');
     }
 }
 
-function openAddBillModal() {
-    try {
-        const modal = document.getElementById('addBillModal');
-        if (modal) {
-            // Reset form if not editing
-            if (!window.financeAI?.editingBillId) {
-                const form = document.getElementById('addBillForm');
-                if (form) form.reset();
-            }
-            
-            modal.classList.add('active');
-            
-            // Focus first input
-            setTimeout(() => {
-                const firstInput = modal.querySelector('input[type="text"]');
-                if (firstInput) firstInput.focus();
-            }, 100);
-        }
-    } catch (error) {
-        console.error('Erro ao abrir modal de boleto:', error);
+// Global functions for modal opening
+function openIncomeModal() {
+    if (financeManager) {
+        financeManager.openIncomeModal();
     }
 }
 
-function openAddInvoiceModal() {
-    try {
-        const modal = document.getElementById('addInvoiceModal');
-        if (modal) {
-            // Reset form if not editing
-            if (!window.financeAI?.editingInvoiceId) {
-                const form = document.getElementById('addInvoiceForm');
-                if (form) form.reset();
-            }
-            
-            modal.classList.add('active');
-            
-            // Focus first input
-            setTimeout(() => {
-                const firstInput = modal.querySelector('input[type="text"]');
-                if (firstInput) firstInput.focus();
-            }, 100);
-        }
-    } catch (error) {
-        console.error('Erro ao abrir modal de nota fiscal:', error);
+function openExpenseModal() {
+    if (financeManager) {
+        financeManager.openExpenseModal();
     }
 }
 
-function openAddRevenueModal() {
-    try {
-        const modal = document.getElementById('addRevenueModal');
-        if (modal) {
-            // Reset form if not editing
-            if (!window.financeAI?.editingRevenueId) {
-                const form = document.getElementById('addRevenueForm');
-                if (form) {
-                    form.reset();
-                    
-                    // Set default date to today
-                    const dateInput = document.getElementById('revenueDate');
-                    if (dateInput) {
-                        dateInput.value = new Date().toISOString().split('T')[0];
-                    }
-                }
-            }
-            
-            modal.classList.add('active');
-            
-            // Focus first input
-            setTimeout(() => {
-                const firstInput = modal.querySelector('input[type="text"]');
-                if (firstInput) firstInput.focus();
-            }, 100);
-        }
-    } catch (error) {
-        console.error('Erro ao abrir modal de receita:', error);
+function openBillModal() {
+    if (financeManager) {
+        financeManager.openBillModal();
+    }
+}
+
+function openCardModal() {
+    if (financeManager) {
+        financeManager.openCardModal();
+    }
+}
+
+function openUpcomingModal() {
+    if (financeManager) {
+        financeManager.openUpcomingModal();
     }
 }
 
 function closeModal(modalId) {
-    try {
-        const modal = document.getElementById(modalId);
-        if (modal) {
-            modal.classList.remove('active');
-        }
-        
-        // Reset editing states
-        if (window.financeAI) {
-            delete window.financeAI.editingBillId;
-            delete window.financeAI.editingInvoiceId;
-            delete window.financeAI.editingRevenueId;
-        }
-    } catch (error) {
-        console.error('Erro ao fechar modal:', error);
+    if (financeManager) {
+        financeManager.closeModal(modalId);
     }
 }
 
-document.addEventListener('DOMContentLoaded', async () => {
+function showAllTransactions() {
+    if (financeManager) {
+        financeManager.showPage('expenses');
+    }
+}
+
+function exportReport() {
+    if (financeManager) {
+        financeManager.exportReport();
+    }
+}
+
+function importData() {
+    if (financeManager) {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.json';
+        input.onchange = (event) => financeManager.importData(event);
+        input.click();
+    }
+}
+
+// Initialize the application with error handling
+let financeManager;
+document.addEventListener('DOMContentLoaded', () => {
     try {
-        window.financeAI = new FinanceAI();
+        financeManager = new FinanceManager();
     } catch (error) {
-        console.error('Erro crítico na inicialização:', error);
-        
-        // Show fallback error message
-        const errorDiv = document.createElement('div');
-        errorDiv.innerHTML = `
-            <div style="position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); 
-                        background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); 
-                        text-align: center; z-index: 9999;">
-                <h3 style="color: #ef4444; margin-bottom: 1rem;">Erro ao inicializar o sistema</h3>
-                <p style="margin-bottom: 1rem;">Ocorreu um erro crítico. Tente recarregar a página.</p>
-                <button onclick="location.reload()" style="background: #2563eb; color: white; padding: 0.5rem 1rem; 
-                                                          border: none; border-radius: 4px; cursor: pointer;">
-                    Recarregar Página
-                </button>
+        console.error('Failed to initialize FinanceManager:', error);
+        document.body.innerHTML = `
+            <div class="error-message">
+                <i class="fas fa-exclamation-triangle"></i>
+                <div>
+                    <strong>Erro de Inicialização</strong>
+                    <p>Não foi possível inicializar o sistema. Por favor, recarregue a página.</p>
+                    <button onclick="window.location.reload()" class="btn-primary">Recarregar</button>
+                </div>
             </div>
         `;
-        document.body.appendChild(errorDiv);
-    }
-});
-
-// Add click outside dropdown handler
-document.addEventListener('click', function(event) {
-    if (!event.target.closest('.dropdown-menu')) {
-        document.querySelectorAll('.dropdown-content.show').forEach(dropdown => {
-            dropdown.classList.remove('show');
-        });
     }
 });
