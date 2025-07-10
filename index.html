@@ -1,3 +1,4 @@
+<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
@@ -10,10 +11,48 @@
     <div id="app">
         <!-- Header -->
         <header class="header">
-            <div class="container">
+            <div class="container" style="position:relative;">
                 <h1><i class="fas fa-utensils"></i> RestaurantePro</h1>
-                <nav>
+                <!-- HAMBURGER MENU BUTTON FOR MOBILE -->
+                <button id="hamburger-btn" class="hamburger-btn" aria-label="Abrir menu" aria-expanded="false" aria-controls="mobile-nav">
+                    <span class="hamburger-bar"></span>
+                    <span class="hamburger-bar"></span>
+                    <span class="hamburger-bar"></span>
+                </button>
+                <!-- MAIN NAVIGATION -->
+                <nav id="main-nav" class="main-nav">
                     <button class="nav-btn active" data-section="dashboard">
+                        <i class="fas fa-tachometer-alt"></i> Dashboard
+                    </button>
+                    <button class="nav-btn" data-section="menu">
+                        <i class="fas fa-utensils"></i> Menu
+                    </button>
+                    <button class="nav-btn" data-section="orders">
+                        <i class="fas fa-receipt"></i> Pedidos
+                    </button>
+                    <button class="nav-btn" data-section="inventory">
+                        <i class="fas fa-boxes"></i> Estoque
+                    </button>
+                    <button class="nav-btn" data-section="analytics">
+                        <i class="fas fa-chart-line"></i> Relatórios
+                    </button>
+                    <button class="nav-btn" data-section="purchases">
+                        <i class="fas fa-shopping-cart"></i> Compras
+                    </button>
+                    <button class="nav-btn" data-section="finances">
+                        <i class="fas fa-dollar-sign"></i> Financeiro
+                    </button>
+                    <button class="nav-btn" data-section="settings">
+                        <i class="fas fa-cog"></i> Configurações
+                    </button>
+                </nav>
+                <!-- MOBILE SLIDING MENU -->
+                <nav id="mobile-nav" class="mobile-nav" aria-label="Navegação principal">
+                    <div class="mobile-nav-header">
+                        <span>Menu</span>
+                        <button id="close-mobile-nav" aria-label="Fechar menu">&times;</button>
+                    </div>
+                    <button class="nav-btn" data-section="dashboard">
                         <i class="fas fa-tachometer-alt"></i> Dashboard
                     </button>
                     <button class="nav-btn" data-section="menu">
@@ -124,9 +163,11 @@
                         <i class="fas fa-plus"></i> Adicionar Item
                     </button>
                 </div>
-                <div class="menu-grid" id="menuGrid">
+                <!-- BEGIN: Responsive container for menu items -->
+                <div class="menu-grid" id="menuGrid" aria-live="polite" style="margin-bottom:2rem; touch-action:pan-y;">
                     <!-- Menu items will be populated here -->
                 </div>
+                <!-- END -->
             </div>
         </section>
 
@@ -631,5 +672,89 @@
 
     <script src="database.js"></script>
     <script src="app.js"></script>
+
+    <script>
+    // Hamburger menu responsive behavior
+    (function() {
+        const hamburgerBtn = document.getElementById('hamburger-btn');
+        const mobileNav = document.getElementById('mobile-nav');
+        const mainNav = document.getElementById('main-nav');
+        const closeMobileNav = document.getElementById('close-mobile-nav');
+
+        function openMobileNav() {
+            mobileNav.classList.add('active');
+            hamburgerBtn.setAttribute('aria-expanded', 'true');
+            document.body.classList.add('nav-open');
+            // Hide the hamburger when mobile nav is open
+            hamburgerBtn.style.visibility = 'hidden';
+            hamburgerBtn.style.opacity = '0';
+        }
+
+        function closeMobileNavFunc() {
+            mobileNav.classList.remove('active');
+            hamburgerBtn.setAttribute('aria-expanded', 'false');
+            document.body.classList.remove('nav-open');
+            // Show the hamburger again
+            hamburgerBtn.style.visibility = 'visible';
+            hamburgerBtn.style.opacity = '1';
+        }
+
+        // Hamburger open
+        hamburgerBtn.addEventListener('click', openMobileNav);
+        if (closeMobileNav) closeMobileNav.addEventListener('click', closeMobileNavFunc);
+
+        // Hide nav if window is resized to desktop
+        window.addEventListener('resize', function() {
+            if (window.innerWidth > 900) {
+                closeMobileNavFunc();
+            }
+        });
+
+        // Close menu when clicking outside
+        document.addEventListener('click', function(e) {
+            if(mobileNav.classList.contains('active') &&
+                !mobileNav.contains(e.target) &&
+                e.target !== hamburgerBtn &&
+                !hamburgerBtn.contains(e.target)) {
+                closeMobileNavFunc();
+            }
+        });
+
+        // Highlight selected nav button
+        function setActiveNavBtn(section) {
+            // Main nav
+            document.querySelectorAll('#main-nav .nav-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.section === section);
+            });
+            // Mobile nav
+            document.querySelectorAll('#mobile-nav .nav-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.section === section);
+            });
+        }
+
+        // Delegate nav clicks for both navs
+        const navHandler = function(event) {
+            const section = event.target.closest('.nav-btn')?.dataset?.section;
+            if (section) {
+                setActiveNavBtn(section);
+                closeMobileNavFunc();
+            }
+        };
+        mainNav.addEventListener('click', navHandler);
+        mobileNav.addEventListener('click', navHandler);
+
+        // Observe section changes set by app
+        window.addEventListener('sectionchange', function(e) {
+            setActiveNavBtn(e.detail.section);
+        });
+
+        // On load, sync active button
+        setTimeout(() => {
+            // Get currently active section
+            const active = document.querySelector('.section.active');
+            if (active) setActiveNavBtn(active.id);
+        }, 100);
+    })();
+    </script>
 </body>
 </html>

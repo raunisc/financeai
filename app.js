@@ -100,7 +100,13 @@ class RestaurantApp {
         document.querySelectorAll('.nav-btn').forEach(btn => {
             btn.classList.remove('active');
         });
-        document.querySelector(`[data-section="${sectionName}"]`).classList.add('active');
+        // Activate both desktop and mobile nav button for the current section
+        document.querySelectorAll(`#main-nav .nav-btn, #mobile-nav .nav-btn`).forEach(btn => {
+            if(btn.dataset.section === sectionName) btn.classList.add('active');
+        });
+
+        // --- EMIT CUSTOM EVENT SO HEADER/JS CAN TRACK ACTIVE SECTION
+        window.dispatchEvent(new CustomEvent('sectionchange', { detail: { section: sectionName } }));
 
         this.currentSection = sectionName;
 
