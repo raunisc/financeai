@@ -2,244 +2,634 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FinanceManager Pro</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <title>RestaurantePro - Sistema de Vendas</title>
     <link rel="stylesheet" href="styles.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
 </head>
 <body>
-    <div class="app-container">
-        <button class="mobile-menu-toggle" id="mobileMenuToggle">☰</button>
-        
-        <nav class="sidebar">
-            <div class="logo">
-                <h2>FinanceManager</h2>
-            </div>
-            <ul class="nav-menu">
-                <li><a href="#" class="nav-link active" data-page="dashboard">Dashboard</a></li>
-                <li><a href="#" class="nav-link" data-page="transactions">Transações</a></li>
-                <li><a href="#" class="nav-link" data-page="bills">Boletos</a></li>
-                <li><a href="#" class="nav-link" data-page="reports">Relatórios</a></li>
-                <li><a href="#" class="nav-link" data-page="settings">Configurações</a></li>
-            </ul>
-        </nav>
-
-        <main class="main-content">
-            <div class="page" id="dashboard">
-                <header class="page-header">
-                    <h1>Dashboard</h1>
-                    <div class="date-filter">
-                        <select id="monthFilter">
-                            <option value="">Todos os meses</option>
-                        </select>
-                        <select id="yearFilter">
-                            <option value="">Todos os anos</option>
-                        </select>
+    <div id="app">
+        <!-- Header -->
+        <header class="header">
+            <div class="container">
+                <h1><i class="fas fa-utensils"></i> RestaurantePro</h1>
+                <nav>
+                    <button class="nav-btn active" data-section="dashboard">
+                        <i class="fas fa-tachometer-alt"></i> Dashboard
+                    </button>
+                    <button class="nav-btn" data-section="menu">
+                        <i class="fas fa-utensils"></i> Menu
+                    </button>
+                    <button class="nav-btn" data-section="orders">
+                        <i class="fas fa-receipt"></i> Pedidos
+                    </button>
+                    <button class="nav-btn" data-section="inventory">
+                        <i class="fas fa-boxes"></i> Estoque
+                    </button>
+                    <button class="nav-btn" data-section="analytics">
+                        <i class="fas fa-chart-line"></i> Relatórios
+                    </button>
+                    <button class="nav-btn" data-section="purchases">
+                        <i class="fas fa-shopping-cart"></i> Compras
+                    </button>
+                    <button class="nav-btn" data-section="finances">
+                        <i class="fas fa-dollar-sign"></i> Financeiro
+                    </button>
+                    <button class="nav-btn" data-section="settings">
+                        <i class="fas fa-cog"></i> Configurações
+                    </button>
+                </nav>
+                <div class="sync-status">
+                    <div id="sync-indicator" class="sync-indicator" onclick="toggleSyncReport()">
+                        <i class="fas fa-database"></i>
+                        <span id="sync-badge" class="sync-badge" style="display: none;">0</span>
                     </div>
-                </header>
-
-                <div class="cards-grid">
-                    <div class="card balance-card income">
-                        <h3>Receitas</h3>
-                        <p class="amount" id="totalIncome">R$ 0,00</p>
-                    </div>
-                    <div class="card balance-card expense">
-                        <h3>Despesas</h3>
-                        <p class="amount" id="totalExpense">R$ 0,00</p>
-                    </div>
-                    <div class="card balance-card balance">
-                        <h3>Saldo</h3>
-                        <p class="amount" id="totalBalance">R$ 0,00</p>
-                    </div>
-                </div>
-
-                <div class="chart-container">
-                    <canvas id="expenseChart"></canvas>
-                </div>
-
-                <div class="recent-transactions">
-                    <h3>Transações Recentes</h3>
-                    <div class="transaction-list" id="recentTransactions"></div>
                 </div>
             </div>
+        </header>
 
-            <div class="page hidden" id="transactions">
-                <header class="page-header">
-                    <h1>Transações</h1>
-                    <button class="btn-primary" id="addTransactionBtn">Adicionar Transação</button>
-                </header>
+        <!-- Dashboard Section -->
+        <section id="dashboard" class="section active">
+            <div class="container">
+                <h2>Dashboard</h2>
+                <div class="dashboard-grid">
+                    <div class="card metric-card">
+                        <div class="card-header">
+                            <h3>Vendas Hoje</h3>
+                            <i class="fas fa-dollar-sign"></i>
+                        </div>
+                        <div class="card-body">
+                            <div class="metric-value" id="todaySales">R$ 0,00</div>
+                            <div class="metric-change" id="todaySalesChange">+0%</div>
+                        </div>
+                    </div>
+                    <div class="card metric-card">
+                        <div class="card-header">
+                            <h3>Lucro Hoje</h3>
+                            <i class="fas fa-chart-line"></i>
+                        </div>
+                        <div class="card-body">
+                            <div class="metric-value" id="todayProfit">R$ 0,00</div>
+                            <div class="metric-change" id="todayProfitChange">+0%</div>
+                        </div>
+                    </div>
+                    <div class="card metric-card">
+                        <div class="card-header">
+                            <h3>Pedidos Hoje</h3>
+                            <i class="fas fa-receipt"></i>
+                        </div>
+                        <div class="card-body">
+                            <div class="metric-value" id="todayOrders">0</div>
+                            <div class="metric-change" id="todayOrdersChange">+0%</div>
+                        </div>
+                    </div>
+                    <div class="card metric-card">
+                        <div class="card-header">
+                            <h3>Itens em Estoque</h3>
+                            <i class="fas fa-boxes"></i>
+                        </div>
+                        <div class="card-body">
+                            <div class="metric-value" id="stockItems">0</div>
+                            <div class="metric-change warning" id="stockAlert">0 críticos</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="dashboard-charts">
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Vendas vs Lucro (7 dias)</h3>
+                        </div>
+                        <div class="card-body">
+                            <canvas id="salesChart"></canvas>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Resumo Financeiro</h3>
+                        </div>
+                        <div class="card-body">
+                            <div id="financialSummary"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
 
-                <div class="filters">
-                    <select id="transactionTypeFilter">
-                        <option value="">Todos os tipos</option>
-                        <option value="income">Receita</option>
-                        <option value="expense">Despesa</option>
+        <!-- Menu Section -->
+        <section id="menu" class="section">
+            <div class="container">
+                <div class="section-header">
+                    <h2>Menu</h2>
+                    <button class="btn btn-primary" onclick="openMenuModal()">
+                        <i class="fas fa-plus"></i> Adicionar Item
+                    </button>
+                </div>
+                <div class="menu-grid" id="menuGrid">
+                    <!-- Menu items will be populated here -->
+                </div>
+            </div>
+        </section>
+
+        <!-- Orders Section -->
+        <section id="orders" class="section">
+            <div class="container">
+                <div class="section-header">
+                    <h2>Pedidos</h2>
+                    <button class="btn btn-primary" onclick="openOrderModal()">
+                        <i class="fas fa-plus"></i> Novo Pedido
+                    </button>
+                </div>
+                <div class="orders-container">
+                    <div class="orders-tabs">
+                        <button class="tab-btn active" data-status="all">Todos</button>
+                        <button class="tab-btn" data-status="pending">Pendentes</button>
+                        <button class="tab-btn" data-status="preparing">Preparando</button>
+                        <button class="tab-btn" data-status="ready">Prontos</button>
+                        <button class="tab-btn" data-status="delivered">Entregues</button>
+                    </div>
+                    <div class="orders-list" id="ordersList">
+                        <!-- Orders will be populated here -->
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Inventory Section -->
+        <section id="inventory" class="section">
+            <div class="container">
+                <div class="section-header">
+                    <h2>Controle de Estoque</h2>
+                    <button class="btn btn-primary" onclick="openInventoryModal()">
+                        <i class="fas fa-plus"></i> Adicionar Item
+                    </button>
+                </div>
+                <div class="inventory-filters">
+                    <input type="text" id="inventorySearch" placeholder="Buscar item no estoque..." class="search-input">
+                    <select id="inventoryFilter" class="filter-select">
+                        <option value="all">Todos os itens</option>
+                        <option value="low">Estoque baixo</option>
+                        <option value="critical">Estoque crítico</option>
                     </select>
-                    <select id="categoryFilter">
-                        <option value="">Todas as categorias</option>
-                    </select>
                 </div>
-
-                <div class="transaction-list" id="transactionList"></div>
-            </div>
-
-            <div class="page hidden" id="bills">
-                <header class="page-header">
-                    <h1>Boletos</h1>
-                    <button class="btn-primary" id="addBillBtn">Adicionar Boleto</button>
-                </header>
-
-                <div class="bills-grid">
-                    <div class="bill-status pending">
-                        <h3>Pendentes</h3>
-                        <div class="bill-list" id="pendingBills"></div>
-                    </div>
-                    <div class="bill-status paid">
-                        <h3>Pagos</h3>
-                        <div class="bill-list" id="paidBills"></div>
-                    </div>
-                    <div class="bill-status overdue">
-                        <h3>Vencidos</h3>
-                        <div class="bill-list" id="overdueBills"></div>
-                    </div>
+                <div class="inventory-table-container">
+                    <table class="inventory-table">
+                        <thead>
+                            <tr>
+                                <th>Item</th>
+                                <th>Quantidade</th>
+                                <th>Unidade</th>
+                                <th>Estoque Mínimo</th>
+                                <th>Status</th>
+                                <th>Ações</th>
+                            </tr>
+                        </thead>
+                        <tbody id="inventoryTable">
+                            <tr>
+                                <td colspan="6" style="text-align: center; padding: 2rem; color: #64748b;">
+                                    Carregando itens do estoque...
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
                 </div>
             </div>
+        </section>
 
-            <div class="page hidden" id="reports">
-                <header class="page-header">
-                    <h1>Relatórios</h1>
-                    <div class="report-filters">
-                        <select id="reportMonth">
-                            <option value="">Todos os meses</option>
-                        </select>
-                        <select id="reportYear">
-                            <option value="">Todos os anos</option>
-                        </select>
+        <!-- Analytics Section -->
+        <section id="analytics" class="section">
+            <div class="container">
+                <h2>Relatórios</h2>
+                <div class="analytics-grid">
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Vendas por Categoria</h3>
+                        </div>
+                        <div class="card-body">
+                            <canvas id="categoryChart"></canvas>
+                        </div>
                     </div>
-                </header>
-
-                <div class="report-cards">
-                    <div class="report-card">
-                        <h3>Resumo Mensal</h3>
-                        <div class="report-summary" id="monthlySummary"></div>
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Tendência de Vendas</h3>
+                        </div>
+                        <div class="card-body">
+                            <canvas id="trendChart"></canvas>
+                        </div>
                     </div>
-                    <div class="report-card">
-                        <h3>Por Categoria</h3>
-                        <div class="category-breakdown" id="categoryBreakdown"></div>
-                    </div>
-                </div>
-
-                <div class="chart-container">
-                    <canvas id="reportChart"></canvas>
                 </div>
             </div>
+        </section>
 
-            <div class="page hidden" id="settings">
-                <header class="page-header">
-                    <h1>Configurações</h1>
-                </header>
+        <!-- Purchases Section -->
+        <section id="purchases" class="section">
+            <div class="container">
+                <div class="section-header">
+                    <h2>Compras</h2>
+                    <button class="btn btn-primary" onclick="openPurchaseModal()">
+                        <i class="fas fa-plus"></i> Nova Compra
+                    </button>
+                </div>
+                <div class="purchases-container">
+                    <div class="purchases-tabs">
+                        <button class="tab-btn active" data-status="all">Todas</button>
+                        <button class="tab-btn" data-status="pending">Pendentes</button>
+                        <button class="tab-btn" data-status="completed">Finalizadas</button>
+                    </div>
+                    <div class="purchases-list" id="purchasesList">
+                        <!-- Purchases will be populated here -->
+                    </div>
+                </div>
+            </div>
+        </section>
 
+        <!-- Finances Section -->
+        <section id="finances" class="section">
+            <div class="container">
+                <div class="section-header">
+                    <h2>Financeiro</h2>
+                    <button class="btn btn-primary" onclick="openExpenseModal()">
+                        <i class="fas fa-plus"></i> Nova Despesa
+                    </button>
+                </div>
+                <div class="finances-grid">
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Resumo Mensal</h3>
+                        </div>
+                        <div class="card-body">
+                            <div class="finance-summary" id="monthlyFinances">
+                                <div class="finance-item">
+                                    <span class="finance-label">Receita:</span>
+                                    <span class="finance-value revenue" id="monthlyRevenue">R$ 0,00</span>
+                                </div>
+                                <div class="finance-item">
+                                    <span class="finance-label">Custos dos Produtos:</span>
+                                    <span class="finance-value cost" id="monthlyCosts">R$ 0,00</span>
+                                </div>
+                                <div class="finance-item">
+                                    <span class="finance-label">Despesas:</span>
+                                    <span class="finance-value expense" id="monthlyExpenses">R$ 0,00</span>
+                                </div>
+                                <div class="finance-item total">
+                                    <span class="finance-label">Lucro Líquido:</span>
+                                    <span class="finance-value profit" id="monthlyProfit">R$ 0,00</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Fluxo de Caixa</h3>
+                        </div>
+                        <div class="card-body">
+                            <canvas id="cashFlowChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+                <div class="expenses-section">
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Despesas Recentes</h3>
+                        </div>
+                        <div class="card-body">
+                            <div class="expenses-list" id="expensesList">
+                                <!-- Expenses will be populated here -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Settings Section -->
+        <section id="settings" class="section">
+            <div class="container">
+                <h2>Configurações</h2>
                 <div class="settings-grid">
-                    <div class="settings-card">
-                        <h3>Backup e Restauração</h3>
-                        <div class="settings-section">
-                            <button class="btn-secondary" id="exportBtn">Exportar Dados</button>
-                            <button class="btn-secondary" id="importBtn">Importar Dados</button>
-                            <input type="file" id="importFile" accept=".json" style="display: none;">
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Configurações do Sistema</h3>
+                        </div>
+                        <div class="card-body">
+                            <div class="setting-item">
+                                <label>Sincronização Automática</label>
+                                <input type="checkbox" id="autoSync" checked>
+                            </div>
+                            <div class="setting-item">
+                                <label>Notificações de Estoque Baixo</label>
+                                <input type="checkbox" id="lowStockNotifications" checked>
+                            </div>
+                            <div class="setting-item">
+                                <label>Backup Automático</label>
+                                <input type="checkbox" id="autoBackup" checked>
+                            </div>
                         </div>
                     </div>
-                    <div class="settings-card">
-                        <h3>Informações do Sistema</h3>
-                        <div class="settings-section" id="systemInfo">
-                            <p>Carregando...</p>
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Banco de Dados</h3>
+                        </div>
+                        <div class="card-body">
+                            <div class="db-status">
+                                <div class="db-item">
+                                    <span class="db-label">MySQL:</span>
+                                    <span class="db-status-indicator" id="mysqlStatus">Desconectado</span>
+                                </div>
+                                <div class="db-item">
+                                    <span class="db-label">SQLite:</span>
+                                    <span class="db-status-indicator" id="sqliteStatus">Conectado</span>
+                                </div>
+                                <div class="db-item">
+                                    <span class="db-label">IndexedDB:</span>
+                                    <span class="db-status-indicator" id="indexeddbStatus">Conectado</span>
+                                </div>
+                            </div>
+                            <div class="db-actions">
+                                <button class="btn btn-secondary" onclick="syncDatabases()">
+                                    <i class="fas fa-sync"></i> Sincronizar
+                                </button>
+                                <button class="btn btn-secondary" onclick="exportData()">
+                                    <i class="fas fa-download"></i> Exportar
+                                </button>
+                                <button class="btn btn-secondary" onclick="importData()">
+                                    <i class="fas fa-upload"></i> Importar
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>
             </div>
-        </main>
-    </div>
+        </section>
 
-    <!-- Modal para adicionar transação -->
-    <div class="modal" id="transactionModal">
-        <div class="modal-content">
-            <span class="close" id="closeTransactionModal">&times;</span>
-            <h2>Adicionar Transação</h2>
-            <form id="transactionForm">
-                <div class="form-group">
-                    <label>Tipo</label>
-                    <select id="transactionType" required>
-                        <option value="">Selecione o tipo</option>
-                        <option value="income">Receita</option>
-                        <option value="expense">Despesa</option>
-                    </select>
+        <!-- Sync Report Modal -->
+        <div id="syncReportModal" class="sync-report-modal">
+            <div class="sync-report-header">
+                <h3><i class="fas fa-sync-alt"></i> Relatório de Sincronização</h3>
+            </div>
+            <div class="sync-report-body">
+                <div class="sync-stats">
+                    <div class="sync-stat">
+                        <span class="sync-stat-label">Última Sincronização</span>
+                        <span class="sync-stat-value" id="lastSyncTime">Nunca</span>
+                    </div>
+                    <div class="sync-stat">
+                        <span class="sync-stat-label">Total de Operações</span>
+                        <span class="sync-stat-value" id="totalOperations">0</span>
+                    </div>
+                    <div class="sync-stat">
+                        <span class="sync-stat-label">Criações</span>
+                        <span class="sync-stat-value" id="totalCreates">0</span>
+                    </div>
+                    <div class="sync-stat">
+                        <span class="sync-stat-label">Atualizações</span>
+                        <span class="sync-stat-value" id="totalUpdates">0</span>
+                    </div>
+                    <div class="sync-stat">
+                        <span class="sync-stat-label">Exclusões</span>
+                        <span class="sync-stat-value" id="totalDeletes">0</span>
+                    </div>
+                    <div class="sync-stat">
+                        <span class="sync-stat-label">Status dos Bancos</span>
+                        <span class="sync-stat-value" id="dbStatus">Verificando...</span>
+                    </div>
                 </div>
-                <div class="form-group">
-                    <label>Categoria</label>
-                    <select id="transactionCategory" required>
-                        <option value="">Selecione a categoria</option>
-                    </select>
+                
+                <div class="sync-activity">
+                    <h4>Atividades Recentes</h4>
+                    <div id="syncActivityList">
+                        <p style="text-align: center; color: #64748b; font-size: 0.875rem;">Nenhuma atividade recente</p>
+                    </div>
                 </div>
-                <div class="form-group">
-                    <label>Descrição</label>
-                    <input type="text" id="transactionDescription" required>
+            </div>
+        </div>
+
+        <!-- Modals -->
+        <div id="menuModal" class="modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>Adicionar Item ao Menu</h3>
+                    <button class="close" onclick="closeModal('menuModal')">&times;</button>
                 </div>
-                <div class="form-group">
-                    <label>Valor</label>
-                    <input type="number" id="transactionAmount" step="0.01" required>
+                <form id="menuForm">
+                    <div class="form-group">
+                        <label>Nome do Item</label>
+                        <input type="text" id="menuName" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Categoria</label>
+                        <select id="menuCategory" required>
+                            <option value="">Selecione uma categoria</option>
+                            <option value="entradas">Entradas</option>
+                            <option value="pratos">Pratos Principais</option>
+                            <option value="sobremesas">Sobremesas</option>
+                            <option value="bebidas">Bebidas</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Preço de Venda</label>
+                        <input type="number" id="menuPrice" step="0.01" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Custo do Produto</label>
+                        <input type="number" id="menuCostPrice" step="0.01" readonly>
+                        <small style="color: #64748b; font-size: 0.875rem; margin-top: 0.5rem; display: block;">
+                            O custo será calculado automaticamente com base nos ingredientes selecionados.
+                        </small>
+                    </div>
+                    <div class="form-group">
+                        <label>Descrição</label>
+                        <textarea id="menuDescription"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label>Ingredientes do Estoque</label>
+                        <div id="menuIngredients">
+                            <!-- Menu ingredients will be populated here -->
+                        </div>
+                        <button type="button" class="btn btn-secondary" onclick="app.addMenuIngredient()">
+                            <i class="fas fa-plus"></i> Adicionar Ingrediente
+                        </button>
+                        <small style="color: #64748b; font-size: 0.875rem; margin-top: 0.5rem; display: block;">
+                            Vincule os ingredientes do estoque que são necessários para este item do menu. O estoque será deduzido automaticamente a cada venda.
+                        </small>
+                    </div>
+                    <div class="form-actions">
+                        <button type="button" class="btn btn-secondary" onclick="closeModal('menuModal')">Cancelar</button>
+                        <button type="submit" class="btn btn-primary">Salvar</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <div id="orderModal" class="modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>Novo Pedido</h3>
+                    <button class="close" onclick="closeModal('orderModal')">&times;</button>
                 </div>
-                <div class="form-group">
-                    <label>Data</label>
-                    <input type="date" id="transactionDate" required>
+                <form id="orderForm">
+                    <div class="form-group">
+                        <label>Cliente</label>
+                        <input type="text" id="orderCustomer" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Mesa</label>
+                        <input type="number" id="orderTable" min="1">
+                    </div>
+                    <div class="form-group">
+                        <label>Itens do Pedido</label>
+                        <div id="orderItems">
+                            <!-- Order items will be populated here -->
+                        </div>
+                        <button type="button" class="btn btn-secondary" onclick="addOrderItem()">
+                            <i class="fas fa-plus"></i> Adicionar Item
+                        </button>
+                    </div>
+                    <div class="form-group">
+                        <label>Total: <span id="orderTotal">R$ 0,00</span></label>
+                    </div>
+                    <div class="form-actions">
+                        <button type="button" class="btn btn-secondary" onclick="closeModal('orderModal')">Cancelar</button>
+                        <button type="submit" class="btn btn-primary">Criar Pedido</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <div id="inventoryModal" class="modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>Adicionar Item ao Estoque</h3>
+                    <button class="close" onclick="closeModal('inventoryModal')">&times;</button>
                 </div>
-                <div class="form-group" id="installmentGroup" style="display: none;">
-                    <label>Parcelas</label>
-                    <input type="number" id="installments" min="1" max="36" value="1">
+                <form id="inventoryForm">
+                    <div class="form-group">
+                        <label>Nome do Item</label>
+                        <input type="text" id="inventoryName" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Quantidade</label>
+                        <input type="number" id="inventoryQuantity" min="0" step="0.01" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Unidade</label>
+                        <select id="inventoryUnit" required>
+                            <option value="">Selecione uma unidade</option>
+                            <option value="kg">Quilograma (kg)</option>
+                            <option value="g">Gramas (g)</option>
+                            <option value="l">Litros (l)</option>
+                            <option value="ml">Mililitros (ml)</option>
+                            <option value="un">Unidades (un)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Estoque Mínimo</label>
+                        <input type="number" id="inventoryMinStock" min="0" step="0.01" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Preço de Custo</label>
+                        <input type="number" id="inventoryCostPrice" step="0.01" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Fornecedor</label>
+                        <input type="text" id="inventorySupplier">
+                    </div>
+                    <div class="form-actions">
+                        <button type="button" class="btn btn-secondary" onclick="closeModal('inventoryModal')">Cancelar</button>
+                        <button type="submit" class="btn btn-primary">Salvar</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <div id="purchaseModal" class="modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>Nova Compra</h3>
+                    <button class="close" onclick="closeModal('purchaseModal')">&times;</button>
                 </div>
-                <button type="submit" class="btn-primary">Adicionar</button>
-            </form>
+                <form id="purchaseForm">
+                    <div class="form-group">
+                        <label>Fornecedor</label>
+                        <input type="text" id="purchaseSupplier" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Data de Entrega (Opcional)</label>
+                        <input type="date" id="purchaseDeliveryDate">
+                    </div>
+                    <div class="form-group">
+                        <label>Itens da Compra</label>
+                        <div id="purchaseItems">
+                            <!-- Purchase items will be populated here -->
+                        </div>
+                        <button type="button" class="btn btn-secondary" onclick="addPurchaseItem()">
+                            <i class="fas fa-plus"></i> Adicionar Item
+                        </button>
+                    </div>
+                    <div class="form-group">
+                        <label>Total: <span id="purchaseTotal">R$ 0,00</span></label>
+                    </div>
+                    <div class="form-actions">
+                        <button type="button" class="btn btn-secondary" onclick="closeModal('purchaseModal')">Cancelar</button>
+                        <button type="submit" class="btn btn-primary">Criar Compra</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <div id="expenseModal" class="modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>Nova Despesa</h3>
+                    <button class="close" onclick="closeModal('expenseModal')">&times;</button>
+                </div>
+                <form id="expenseForm">
+                    <div class="form-group">
+                        <label>Descrição</label>
+                        <input type="text" id="expenseDescription" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Categoria</label>
+                        <select id="expenseCategory" required>
+                            <option value="">Selecione uma categoria</option>
+                            <option value="aluguel">Aluguel</option>
+                            <option value="energia">Energia</option>
+                            <option value="agua">Água</option>
+                            <option value="telefone">Telefone/Internet</option>
+                            <option value="funcionarios">Funcionários</option>
+                            <option value="marketing">Marketing</option>
+                            <option value="equipamentos">Equipamentos</option>
+                            <option value="manutencao">Manutenção</option>
+                            <option value="outros">Outros</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Valor</label>
+                        <input type="number" id="expenseAmount" step="0.01" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Data</label>
+                        <input type="date" id="expenseDate" required>
+                    </div>
+                    <div class="form-actions">
+                        <button type="button" class="btn btn-secondary" onclick="closeModal('expenseModal')">Cancelar</button>
+                        <button type="submit" class="btn btn-primary">Salvar</button>
+                    </div>
+                </form>
+            </div>
         </div>
     </div>
 
-    <!-- Modal para adicionar boleto -->
-    <div class="modal" id="billModal">
-        <div class="modal-content">
-            <span class="close" id="closeBillModal">&times;</span>
-            <h2>Adicionar Boleto</h2>
-            <form id="billForm">
-                <div class="form-group">
-                    <label>Descrição</label>
-                    <input type="text" id="billDescription" required>
-                </div>
-                <div class="form-group">
-                    <label>Valor</label>
-                    <input type="number" id="billAmount" step="0.01" required>
-                </div>
-                <div class="form-group">
-                    <label>Data de Vencimento</label>
-                    <input type="date" id="billDueDate" required>
-                </div>
-                <div class="form-group">
-                    <label>Categoria</label>
-                    <select id="billCategory" required>
-                        <option value="">Selecione a categoria</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label>
-                        <input type="checkbox" id="billRecurring">
-                        Recorrente (mensal)
-                    </label>
-                </div>
-                <div class="form-group" id="duplicateGroup" style="display: none;">
-                    <label>Número de duplicatas</label>
-                    <input type="number" id="duplicateCount" min="1" max="12" value="1">
-                </div>
-                <button type="submit" class="btn-primary">Adicionar</button>
-            </form>
-        </div>
-    </div>
+    <script type="importmap">
+    {
+        "imports": {
+            "chart.js": "https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.js",
+            "chart.js/auto": "https://cdn.jsdelivr.net/npm/chart.js@4.4.0/auto/auto.esm.js",
+            "sql.js": "https://cdn.jsdelivr.net/npm/sql.js@1.8.0/dist/sql-wasm.js"
+        }
+    }
+    </script>
 
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="database.js"></script>
-    <script src="script.js"></script>
+    <script src="app.js"></script>
 </body>
 </html>
