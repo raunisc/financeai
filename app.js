@@ -623,8 +623,8 @@ class RestaurantApp {
 
     getCategoryName(category) {
         const categoryNames = {
-            'entradas': 'Entradas',
-            'pratos': 'Pratos Principais', 
+            'entradas': 'Dogao do Canela Fina',
+            'pratos': 'Burger e Otakus', 
             'sobremesas': 'Sobremesas',
             'bebidas': 'Bebidas'
         };
