@@ -1,4 +1,3 @@
-<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
@@ -187,6 +186,7 @@
                         <button class="tab-btn" data-status="preparing">Preparando</button>
                         <button class="tab-btn" data-status="ready">Prontos</button>
                         <button class="tab-btn" data-status="delivered">Entregues</button>
+                        <button class="tab-btn" data-status="cancelled">Cancelados</button>
                     </div>
                     <div class="orders-list" id="ordersList">
                         <!-- Orders will be populated here -->
@@ -240,21 +240,99 @@
         <section id="analytics" class="section">
             <div class="container">
                 <h2>Relatórios</h2>
-                <div class="analytics-grid">
+
+                <!-- FILTRO DE PERÍODO: Analytics -->
+                <div class="analytics-filter-bar" style="margin: 1rem 0 2rem 0; display: flex; gap: 1.5rem; align-items: flex-end; flex-wrap: wrap;">
+                    <div>
+                        <label for="analyticsDateFrom" style="font-size: 0.92em; color: #64748b; margin-bottom: 0.15rem; display: block;">De:</label>
+                        <input type="date" id="analyticsDateFrom" class="search-input" style="width: 160px;">
+                    </div>
+                    <div>
+                        <label for="analyticsDateTo" style="font-size: 0.92em; color: #64748b; margin-bottom: 0.15rem; display: block;">Até:</label>
+                        <input type="date" id="analyticsDateTo" class="search-input" style="width: 160px;">
+                    </div>
+                    <button class="btn btn-secondary" id="analyticsFilterBtn" style="height:42px;">
+                        <i class="fas fa-filter"></i> Filtrar Período
+                    </button>
+                    <button class="btn btn-small btn-secondary" id="analyticsClearFilterBtn" style="height:42px; margin-left:0.5em;display:none;">
+                        Limpar Filtro
+                    </button>
+                </div>
+
+                <div class="analytics-full-reports">
+                    <!-- Vendas por Categoria e Top Itens -->
                     <div class="card">
                         <div class="card-header">
-                            <h3>Vendas por Categoria</h3>
+                            <h3>Vendas por Categoria (Total)</h3>
                         </div>
                         <div class="card-body">
                             <canvas id="categoryChart"></canvas>
+                            <div class="top-sales-category" id="topSalesCategory"></div>
                         </div>
                     </div>
+                    <!-- Tendência de Vendas e Média Pedido -->
                     <div class="card">
                         <div class="card-header">
-                            <h3>Tendência de Vendas</h3>
+                            <h3>Tendência de Vendas Mensais</h3>
                         </div>
                         <div class="card-body">
                             <canvas id="trendChart"></canvas>
+                            <div style="margin-top:1.3rem;" id="avgOrderValueTrend"></div>
+                        </div>
+                    </div>
+                    <!-- Top Itens Vendidos -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Top 10 Itens Vendidos</h3>
+                        </div>
+                        <div class="card-body">
+                            <div id="topMenuItems"></div>
+                        </div>
+                    </div>
+                    <!-- Ranking de Clientes -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Top Clientes</h3>
+                        </div>
+                        <div class="card-body">
+                            <div id="topClients"></div>
+                        </div>
+                    </div>
+                    <!-- Estatísticas Gerais e Pedidos por Plataforma -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Estatísticas Avançadas</h3>
+                        </div>
+                        <div class="card-body">
+                            <div id="generalStats"></div>
+                            <canvas id="ordersByPlatformChart" style="margin-top:2rem;"></canvas>
+                        </div>
+                    </div>
+                    <!-- NOVA ÁREA DE CANCELAMENTOS (Relatório Exclusivo) -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Relatório de Cancelamentos</h3>
+                        </div>
+                        <div class="card-body">
+                            <div id="cancellationReport"></div>
+                        </div>
+                    </div>
+                    <!-- NOVA ÁREA DE TAXAS E DESCONTOS (Relatório Exclusivo) -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Relatório de Taxas e Descontos</h3>
+                        </div>
+                        <div class="card-body">
+                            <div id="feesReport"></div>
+                        </div>
+                    </div>
+                    <!-- Movimentações de Estoque -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Movimentações de Estoque</h3>
+                        </div>
+                        <div class="card-body">
+                            <div id="stockMovementReport"></div>
                         </div>
                     </div>
                 </div>
@@ -368,6 +446,33 @@
                     </div>
                     <div class="card">
                         <div class="card-header">
+                            <h3>Taxas de Pagamento</h3>
+                        </div>
+                        <div class="card-body">
+                            <div class="setting-item">
+                                <label>Taxa Cartão de Crédito (%)</label>
+                                <input type="number" id="creditCardFee" step="0.01" min="0" max="100" value="3.5" onchange="app.savePaymentFees()">
+                            </div>
+                            <div class="setting-item">
+                                <label>Taxa Cartão de Débito (%)</label>
+                                <input type="number" id="debitCardFee" step="0.01" min="0" max="100" value="2.5" onchange="app.savePaymentFees()">
+                            </div>
+                            <div class="setting-item">
+                                <label>Taxa PIX (%)</label>
+                                <input type="number" id="pixFee" step="0.01" min="0" max="100" value="0.99" onchange="app.savePaymentFees()">
+                            </div>
+                            <div class="setting-item">
+                                <label>Taxa Ifood (%)</label>
+                                <input type="number" id="ifoodFee" step="0.01" min="0" max="100" value="12.0" onchange="app.savePaymentFees()">
+                            </div>
+                            <div class="setting-item">
+                                <label>Investimento Ifood (%)</label>
+                                <input type="number" id="ifoodInvestment" step="0.01" min="0" max="100" value="5.0" onchange="app.savePaymentFees()">
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header">
                             <h3>Banco de Dados</h3>
                         </div>
                         <div class="card-body">
@@ -460,8 +565,8 @@
                         <label>Categoria</label>
                         <select id="menuCategory" required>
                             <option value="">Selecione uma categoria</option>
-                            <option value="entradas">Dogão do Canela Fina</option>
-                            <option value="pratos">Burger e Otakus</option>
+                            <option value="dogao">Dogão do Canela Fina</option>
+                            <option value="burger">Burger e Otakus</option>
                             <option value="sobremesas">Sobremesas</option>
                             <option value="bebidas">Bebidas</option>
                         </select>
@@ -513,8 +618,21 @@
                         <input type="text" id="orderCustomer" required>
                     </div>
                     <div class="form-group">
-                        <label>Mesa</label>
-                        <input type="number" id="orderTable" min="1">
+                        <label>Plataforma</label>
+                        <select id="orderPlatform" required onchange="app.updatePaymentMethods()">
+                            <option value="vendas">Vendas Internas</option>
+                            <option value="ifood">Ifood</option>
+                        </select>
+                    </div>
+                    <div class="form-group" id="paymentMethodGroup">
+                        <label>Forma de Pagamento</label>
+                        <select id="orderPaymentMethod" required onchange="app.updateOrderTotal()">
+                            <option value="">Selecione a forma de pagamento</option>
+                            <option value="dinheiro">Dinheiro</option>
+                            <option value="credito">Cartão de Crédito</option>
+                            <option value="debito">Cartão de Débito</option>
+                            <option value="pix">PIX</option>
+                        </select>
                     </div>
                     <div class="form-group">
                         <label>Itens do Pedido</label>
@@ -526,7 +644,9 @@
                         </button>
                     </div>
                     <div class="form-group">
-                        <label>Total: <span id="orderTotal">R$ 0,00</span></label>
+                        <label>Subtotal: <span id="orderSubtotal">R$ 0,00</span></label>
+                        <div id="orderFeeInfo" style="margin-top: 0.5rem; font-size: 0.875rem; color: #64748b;"></div>
+                        <label style="font-weight: 700; color: #059669; font-size: 1.1rem;">Total: <span id="orderTotal">R$ 0,00</span></label>
                     </div>
                     <div class="form-actions">
                         <button type="button" class="btn btn-secondary" onclick="closeModal('orderModal')">Cancelar</button>
@@ -658,14 +778,44 @@
                 </form>
             </div>
         </div>
+
+        <div id="cancelOrderModal" class="modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3><i class="fas fa-times-circle"></i> Cancelar Pedido</h3>
+                    <button class="close" onclick="closeModal('cancelOrderModal')">&times;</button>
+                </div>
+                <form id="cancelOrderForm">
+                    <div class="form-group">
+                        <label>Informações do Pedido</label>
+                        <div id="cancelOrderInfo" style="background: #f8fafc; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; border: 1px solid #e2e8f0;">
+                            <!-- Order info will be populated here -->
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Quem está cancelando o pedido? *</label>
+                        <input type="text" id="cancelOrderBy" required placeholder="Nome de quem está cancelando">
+                    </div>
+                    <div class="form-group">
+                        <label>Motivo do cancelamento (opcional)</label>
+                        <textarea id="cancelOrderReason" placeholder="Descreva o motivo do cancelamento..." rows="3"></textarea>
+                    </div>
+                    <div class="form-actions">
+                        <button type="button" class="btn btn-secondary" onclick="closeModal('cancelOrderModal')">Voltar</button>
+                        <button type="submit" class="btn btn-danger">
+                            <i class="fas fa-times"></i> Confirmar Cancelamento
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
     </div>
 
     <script type="importmap">
     {
         "imports": {
             "chart.js": "https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.js",
-            "chart.js/auto": "https://cdn.jsdelivr.net/npm/chart.js@4.4.0/auto/auto.esm.js",
-            "sql.js": "https://cdn.jsdelivr.net/npm/sql.js@1.8.0/dist/sql-wasm.js"
+            "chart.js/auto": "https://cdn.jsdelivr.net/npm/chart.js@4.4.0/auto/auto.esm.js"
         }
     }
     </script>
@@ -755,6 +905,24 @@
             if (active) setActiveNavBtn(active.id);
         }, 100);
     })();
+
+    // Add analytics filter bar listeners on DOMContentLoaded
+    document.addEventListener('DOMContentLoaded', () => {
+        window.app = new RestaurantApp();
+
+        // Analytics filter: set event listeners
+        const analyticsFilterBtn = document.getElementById('analyticsFilterBtn');
+        const analyticsClearBtn = document.getElementById('analyticsClearFilterBtn');
+
+        if (analyticsFilterBtn && analyticsClearBtn) {
+            analyticsFilterBtn.addEventListener('click', function() {
+                window.app.applyAnalyticsPeriodFilter();
+            });
+            analyticsClearBtn.addEventListener('click', function() {
+                window.app.clearAnalyticsPeriodFilter();
+            });
+        }
+    });
     </script>
 </body>
 </html>

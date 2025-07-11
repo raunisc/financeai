@@ -173,6 +173,10 @@ class DatabaseManager {
                 table_number INTEGER,
                 items TEXT NOT NULL,
                 total REAL NOT NULL,
+                subtotal REAL DEFAULT 0,
+                fee REAL DEFAULT 0,
+                platform TEXT DEFAULT 'vendas',
+                payment_method TEXT DEFAULT 'dinheiro',
                 status TEXT DEFAULT 'pending',
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -303,12 +307,21 @@ class DatabaseManager {
                 table_number INT,
                 items JSON NOT NULL,
                 total DECIMAL(10,2) NOT NULL,
-                status ENUM('pending', 'preparing', 'ready', 'delivered') DEFAULT 'pending',
+                subtotal DECIMAL(10,2) DEFAULT 0,
+                fee DECIMAL(10,2) DEFAULT 0,
+                platform VARCHAR(50) DEFAULT 'vendas',
+                payment_method VARCHAR(50) DEFAULT 'dinheiro',
+                status ENUM('pending', 'preparing', 'ready', 'delivered', 'cancelled') DEFAULT 'pending',
+                cancelled_by VARCHAR(255),
+                cancellation_reason TEXT,
+                cancelled_at TIMESTAMP NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 INDEX idx_status (status),
                 INDEX idx_date (created_at),
-                INDEX idx_customer (customer)
+                INDEX idx_customer (customer),
+                INDEX idx_platform (platform),
+                INDEX idx_payment_method (payment_method)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
             
             `CREATE TABLE IF NOT EXISTS inventory (

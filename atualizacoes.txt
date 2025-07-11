@@ -1,0 +1,165 @@
+# Atualizações do Sistema RestaurantePro
+
+## Versão 2.2.0 - Data: [Data atual]
+
+### Novas Funcionalidades:
+
+#### 1. Sistema Completo de Taxas de Pagamento
+- **Funcionalidade**: Sistema de configuração e cálculo de taxas para diferentes métodos de pagamento
+- **Recursos**:
+  - Configuração de taxa de cartão de crédito (padrão: 3.5%)
+  - Configuração de taxa de cartão de débito (padrão: 2.5%)
+  - Configuração de taxa PIX (padrão: 0.99%)
+  - Configuração de taxa Ifood (padrão: 12.0%)
+  - Configuração de investimento Ifood (padrão: 5.0%)
+  - Salvamento automático das configurações no banco de dados
+
+#### 2. Sistema de Formas de Pagamento em Pedidos
+- **Funcionalidade**: Seleção de forma de pagamento durante criação de pedidos
+- **Recursos**:
+  - Para vendas internas: Dinheiro, Cartão de Crédito, Cartão de Débito, PIX
+  - Para Ifood: Aplicação automática de taxas Ifood + Investimento
+  - Cálculo automático de taxas baseado na forma de pagamento
+  - Exibição de subtotal, taxa aplicada e total final
+  - Armazenamento da forma de pagamento e taxas no pedido
+
+#### 3. Impacto nas Métricas e Relatórios
+- **Funcionalidade**: Taxas são deduzidas automaticamente do lucro em todos os cálculos
+- **Recursos**:
+  - Dashboard: Lucro hoje considera taxas de pagamento
+  - Gráfico de vendas vs lucro: Inclui dedução de taxas
+  - Resumo financeiro: Nova linha "Taxas de Pagamento"
+  - Fluxo de caixa: Taxas incluídas no cálculo de despesas
+  - Relatórios de analytics: Todos consideram taxas nas análises
+
+#### 4. Relatório Detalhado de Taxas e Descontos
+- **Funcionalidade**: Nova seção exclusiva no relatório para análise de taxas
+- **Recursos**:
+  - Resumo geral: Receita total, total de taxas, % de taxas sobre receita
+  - Detalhamento por método: Taxa %, quantidade de pedidos, valor vendido, total de taxas, valor líquido
+  - Ordenação por maior impacto financeiro
+  - Análise comparativa entre métodos de pagamento
+  - Integração com filtro de período dos relatórios
+
+#### 5. Aprimoramentos na Exibição de Pedidos
+- **Funcionalidade**: Informações detalhadas sobre pagamento e taxas nos pedidos
+- **Recursos**:
+  - Exibição da forma de pagamento em cada pedido
+  - Mostrar subtotal, taxa aplicada e total final
+  - Diferenciação visual entre pedidos com e sem taxas
+  - Histórico completo de taxas aplicadas
+
+### Melhorias Técnicas:
+
+#### 1. Estrutura de Banco de Dados
+- **Campos adicionados na tabela orders**:
+  - `subtotal`: Valor antes das taxas
+  - `fee`: Valor da taxa aplicada
+  - `platform`: Plataforma do pedido (vendas/ifood)
+  - `payment_method`: Forma de pagamento escolhida
+
+#### 2. Sistema de Configurações
+- **Nova tabela settings**: Armazenamento persistente das configurações de taxas
+- **Interface de configuração**: Formulário dedicado para ajuste de todas as taxas
+- **Validação**: Controles de entrada com limites adequados (0-100%)
+
+#### 3. Cálculos Financeiros
+- **Algoritmos aprimorados**: Todos os cálculos de lucro agora consideram taxas
+- **Precisão**: Cálculos com 2 casas decimais para valores monetários
+- **Consistência**: Aplicação uniforme das taxas em todo o sistema
+
+### Compatibilidade:
+- ✅ Mantém compatibilidade com versões anteriores
+- ✅ Migração automática: Pedidos antigos recebem payment_method "dinheiro"
+- ✅ Importação de dados: Conversão automática de campos legados
+- ✅ Valores padrão: Sistema funciona mesmo sem configuração inicial
+
+### Notas Importantes:
+1. Taxas são aplicadas automaticamente no momento da criação do pedido
+2. Pedidos em dinheiro não possuem taxas aplicadas
+3. Ifood possui dupla taxa: plataforma (12%) + investimento (5%)
+4. Todas as taxas são deduzidas do lucro final
+5. Configurações são salvas permanentemente no banco de dados
+6. Relatórios respeitam o filtro de período para análise de taxas
+
+---
+
+## Versão 2.1.0 - Data: [Data anterior]
+
+### Novas Funcionalidades:
+
+#### 1. Sistema de Cancelamento de Pedidos
+- **Funcionalidade**: Adicionada opção de cancelar pedidos em qualquer status
+- **Recursos**:
+  - Registro obrigatório de quem cancelou o pedido
+  - Campo opcional para motivo do cancelamento
+  - Data e hora completa do cancelamento
+  - Aba "Cancelados" na seção de pedidos
+  - Exibição de informações do cancelamento na lista de pedidos
+
+#### 2. Impacto no Dashboard
+- **Correção**: Pedidos cancelados não são mais contabilizados nas métricas do dashboard
+- **Recursos**:
+  - Vendas hoje excluem pedidos cancelados
+  - Lucro hoje excluem pedidos cancelados
+  - Contagem de pedidos hoje excluem cancelamentos
+  - Gráfico de vendas vs lucro (7 dias) excluem cancelamentos
+
+#### 3. Relatórios Aprimorados
+- **Funcionalidade**: Pedidos cancelados são excluídos de todos os relatórios por padrão
+- **Recursos**:
+  - Estatísticas gerais incluem contagem e valor de pedidos cancelados
+  - Histórico de cancelamentos no relatório de movimentações
+  - Registro detalhado de cancelamentos no log de atividades
+
+#### 4. Gráfico de Fluxo de Caixa Melhorado
+- **Mudança**: Gráfico de barras alterado para linhas
+- **Recursos**:
+  - Receita, despesas e lucro exibidos como linhas
+  - Melhor visualização de tendências
+  - Mantém a mesma funcionalidade de dados
+
+### Melhorias Técnicas:
+
+#### 1. Sistema de Logs
+- **Novo tipo de log**: 'order_cancellation' para rastrear cancelamentos
+- **Campos registrados**:
+  - ID do pedido cancelado
+  - Cliente
+  - Valor do pedido
+  - Quem cancelou
+  - Motivo (opcional)
+  - Data/hora do cancelamento
+  - Status original do pedido
+
+#### 2. Filtros e Consultas
+- **Melhoria**: Todos os filtros de relatórios agora excluem pedidos cancelados automaticamente
+- **Recursos**:
+  - Gráficos de tendência
+  - Top 10 itens vendidos
+  - Top clientes
+  - Análise por categorias
+  - Ticket médio
+
+#### 3. Interface do Usuário
+- **Nova aba**: "Cancelados" na seção de pedidos
+- **Novos botões**: "Cancelar" disponível em pedidos não entregues
+- **Informações adicionais**: Dados do cancelamento exibidos nos pedidos cancelados
+
+### Compatibilidade:
+- ✅ Mantém compatibilidade com versões anteriores
+- ✅ Importação de dados funciona normalmente
+- ✅ Todos os recursos existentes preservados
+- ✅ Não requer migração de dados
+
+### Notas Importantes:
+1. Pedidos cancelados não afetam métricas de vendas e lucro
+2. Cancelamentos são registrados permanentemente no sistema
+3. Relatórios históricos automaticamente excluem cancelamentos
+4. Sistema de logs mantém histórico completo de todas as ações
+
+---
+
+**Desenvolvido para**: Sistema RestaurantePro
+**Tipo de atualização**: Sistema de Taxas + Formas de Pagamento
+**Status**: Implementado e testado

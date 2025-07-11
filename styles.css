@@ -647,6 +647,11 @@ body {
     color: #6b7280;
 }
 
+.order-status.cancelled {
+    background: #fee2e2;
+    color: #dc2626;
+}
+
 /* Purchases */
 .purchases-container {
     background: white;
@@ -742,6 +747,7 @@ body {
     border-color: #059669;
     outline: none;
     box-shadow: 0 0 0 3px rgba(5, 150, 105, 0.1);
+    transform: translateY(-1px);
 }
 
 .purchase-completed {
@@ -914,21 +920,17 @@ body {
 
 /* CORRIGIDO: Padrão do botão perigo (btn-danger) para melhor contraste */
 .btn-danger {
-    background: linear-gradient(135deg, #fee2e2, #fecaca, #dc2626 90%);
-    color: #dc2626;
-    border: 1.5px solid #dc2626;
-    box-shadow: 0 4px 12px rgba(220, 38, 38, 0.13);
+    background: linear-gradient(135deg, #fee2e2, #fecaca, #dc2626 90%) !important;
+    color: #dc2626 !important;
+    border: 1.5px solid #dc2626 !important;
 }
 
 .btn-danger:hover,
 .btn-danger:focus,
 .btn-danger:active {
-    background: linear-gradient(135deg, #dc2626, #b91c1c 90%);
-    color: #fff;
-    border-color: #b91c1c;
-    box-shadow: 0 6px 20px rgba(220, 38, 38, 0.24);
-    outline: none;
-    filter: brightness(1.04);
+    background: linear-gradient(135deg, #dc2626, #b91c1c 90%) !important;
+    color: #fff !important;
+    border-color: #b91c1c !important;
 }
 
 /* BTN-SMALL padrão de cor, inclusive para perigo */
@@ -941,7 +943,8 @@ body {
 
 /* Especificidade reforçada para botões dentro de ações do menu (exclui botão danger com texto branco) */
 .menu-item-actions .btn-danger,
-.menu-item-actions .btn.btn-small.btn-danger {
+.menu-item-actions .btn.btn-small.btn-danger,
+.inventory-table .btn-danger {
     color: #dc2626 !important;
     background: linear-gradient(135deg, #fee2e2, #fecaca, #dc2626 90%) !important;
     border: 1.5px solid #dc2626 !important;
@@ -949,7 +952,9 @@ body {
 
 .menu-item-actions .btn-danger:hover,
 .menu-item-actions .btn-danger:focus,
-.menu-item-actions .btn-danger:active {
+.menu-item-actions .btn-danger:active,
+.inventory-table .btn-danger:hover,
+.inventory-table .btn-danger:focus {
     color: #fff !important;
     background: linear-gradient(135deg, #dc2626, #b91c1c 90%) !important;
     border-color: #b91c1c !important;
@@ -1988,4 +1993,83 @@ body.nav-open .hamburger-btn {
     border-top: 2px solid #059669;
     border-radius: 50%;
     animation: spin 1s linear infinite;
+}
+
+/* ---- ANALYTICS SECTION MELHORADA ---- */
+.analytics-full-reports {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(376px, 1fr));
+    gap: 1.35rem;
+    margin-top: 1rem;
+}
+
+#topMenuItems, #topClients, #stockMovementReport, #generalStats, #topSalesCategory, #avgOrderValueTrend {
+    font-size: 0.95rem;
+    color: #374151;
+    margin-top: 0.15rem;
+}
+
+/* Top 10 Styles */
+.top10-list, .top-sales-category-list, .top-clients-list {
+    margin: 0.7rem 0;
+    padding: 0;
+    list-style: none;
+}
+.top10-item, .top-client-item, .top-sales-category-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #e2e8f0;
+    padding: 0.6rem 0.1rem 0.6rem 0.25rem;
+    font-size: 0.96em;
+}
+.top10-item:last-child, .top-client-item:last-child, .top-sales-category-item:last-child {
+    border-bottom: none;
+}
+.top10-rank {
+    font-weight: bold;
+    color: #059669;
+    margin-right: 0.5rem;
+}
+.top10-name, .top-client-name, .top-sales-category-name {
+    font-weight: 600;
+    flex: 2;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.top10-qtd, .top10-sum, .top-client-qtd, .top-client-sum, .top-sales-category-sum {
+    font-weight: 600;
+    color: #0891b2;
+    margin-left: 0.6rem;
+    white-space: nowrap;
+}
+
+/* Responsive cards grid */
+@media (max-width:900px) {
+    .analytics-full-reports {
+        grid-template-columns: 1fr;
+        gap: 1.15rem;
+    }
+}
+
+/* Gráficos responsivos para área de relatórios */
+.analytics-full-reports canvas {
+    display: block;
+    width: 100% !important;
+    height: 290px !important;
+    min-height: 190px;
+    max-height: 320px;
+    background: #fff;
+    margin-bottom: 0.7rem;
+    border-radius: 8px;
+    margin-top: 0.35rem;
+    box-shadow: 0 1px 6px rgba(0,0,0,0.05);
+}
+
+/* Melhorar formatação categorias/top10-listas para não colar bordas */
+.top-sales-category-list,
+.top10-list,
+.top-clients-list {
+    margin: 1em 0 0.4em 0;
 }

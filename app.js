@@ -4,15 +4,30 @@ class RestaurantApp {
         this.currentSection = 'dashboard';
         this.charts = {};
         this.orderTotal = 0;
+        this.orderSubtotal = 0;
+        this.orderFee = 0;
         this.orderItems = [];
         this.purchaseTotal = 0;
         this.purchaseItems = [];
+        
+        // Relatórios: estado do filtro de período
+        this.analyticsPeriod = null; // {from: Date, to: Date} OU null (padrão: tudo)
+        
+        // Payment fees Taxa de Pagamento
+        this.paymentFees = {
+            creditCardFee: 3.5,
+            debitCardFee: 2.5,
+            pixFee: 0.00,
+            ifoodFee: 26.3,
+            ifoodInvestment: 5.0
+        };
         
         this.init();
     }
 
     async init() {
         await this.waitForDB();
+        await this.loadPaymentFees();
         this.setupEventListeners();
         this.loadDashboard();
         this.setupAutoSync();
@@ -60,6 +75,11 @@ class RestaurantApp {
             this.handleExpenseSubmit();
         });
 
+        document.getElementById('cancelOrderForm').addEventListener('submit', (e) => {
+            e.preventDefault();
+            this.handleCancelOrderSubmit();
+        });
+
         // Order tabs
         document.querySelectorAll('.tab-btn').forEach(btn => {
             btn.addEventListener('click', (e) => {
@@ -85,6 +105,131 @@ class RestaurantApp {
         document.getElementById('autoSync').addEventListener('change', (e) => {
             this.setupAutoSync();
         });
+
+        // DATA IMPORT LOGIC: Import data ensuring DB compatibility with updated categories/fields
+        // Overriding the importData logic from db.importData to convert categories/fields if needed
+        const originalImport = window.db.importData.bind(window.db);
+        window.db.importData = async () => {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.json';
+            input.onchange = async (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                try {
+                    const text = await file.text();
+                    const data = JSON.parse(text);
+                    // --- DADOS PREPROCESSAMENTO: 
+                    // 1. Atualizar categorias do menu para as novas chaves
+                    // 2. Corrigir campo 'mesa' -> 'plataforma'
+                    if (data.tables) {
+                        // Atualização de categorias no menu
+                        if (Array.isArray(data.tables.menu)) {
+                            data.tables.menu.forEach(item => {
+                                if (item.category === 'entradas') item.category = 'dogao';
+                                if (item.category === 'pratos') item.category = 'burger';
+                            });
+                        }
+                        // Atualização dos pedidos: 'mesa' -> 'platform'
+                        if (Array.isArray(data.tables.orders)) {
+                            data.tables.orders.forEach(order => {
+                                // Se "mesa" existe, converte para platform
+                                if ('mesa' in order) {
+                                    // Se for valor 2 = ifood, outro = vendas internas (ou adapte se necessário)
+                                    if (typeof order.mesa === "string" && order.mesa.toLowerCase().includes("ifood")) {
+                                        order.platform = 'ifood';
+                                    } else {
+                                        order.platform = 'vendas';
+                                    }
+                                }
+                                // Se por acaso veio com 'plataforma', renomeia para 'platform'
+                                if ('plataforma' in order) {
+                                    order.platform = order.plataforma;
+                                    // Remove antigo
+                                    delete order.plataforma;
+                                }
+                                // Add default payment method if missing
+                                if (!order.payment_method) {
+                                    order.payment_method = 'dinheiro';
+                                }
+                            });
+                        }
+                    }
+                    // Serializa temp e faz o import original!
+                    const newBlob = new Blob([JSON.stringify(data)], { type: 'application/json' });
+                    const newFile = new File([newBlob], 'import.json');
+                    Object.defineProperty(newFile, 'text', { value: () => Promise.resolve(newBlob.text()) });
+                    // Simula File event para o import original
+                    const fakeEvent = { target: { files: [newFile] } };
+                    await originalImport(fakeEvent);
+                } catch (error) {
+                    console.error('Erro ao importar e converter:', error);
+                    window.app.showNotification('Erro ao importar dados: ' + error.message, 'error');
+                }
+            };
+            input.click();
+        };
+    }
+
+    async loadPaymentFees() {
+        try {
+            const settings = await window.db.read('settings');
+            const feesSettings = settings.filter(s => s.key.includes('Fee') || s.key.includes('Investment'));
+            
+            feesSettings.forEach(setting => {
+                if (setting.key === 'creditCardFee') this.paymentFees.creditCardFee = parseFloat(setting.value);
+                if (setting.key === 'debitCardFee') this.paymentFees.debitCardFee = parseFloat(setting.value);
+                if (setting.key === 'pixFee') this.paymentFees.pixFee = parseFloat(setting.value);
+                if (setting.key === 'ifoodFee') this.paymentFees.ifoodFee = parseFloat(setting.value);
+                if (setting.key === 'ifoodInvestment') this.paymentFees.ifoodInvestment = parseFloat(setting.value);
+            });
+
+            // Update UI
+            document.getElementById('creditCardFee').value = this.paymentFees.creditCardFee;
+            document.getElementById('debitCardFee').value = this.paymentFees.debitCardFee;
+            document.getElementById('pixFee').value = this.paymentFees.pixFee;
+            document.getElementById('ifoodFee').value = this.paymentFees.ifoodFee;
+            document.getElementById('ifoodInvestment').value = this.paymentFees.ifoodInvestment;
+        } catch (error) {
+            console.error('Error loading payment fees:', error);
+        }
+    }
+
+    async savePaymentFees() {
+        try {
+            this.paymentFees.creditCardFee = parseFloat(document.getElementById('creditCardFee').value);
+            this.paymentFees.debitCardFee = parseFloat(document.getElementById('debitCardFee').value);
+            this.paymentFees.pixFee = parseFloat(document.getElementById('pixFee').value);
+            this.paymentFees.ifoodFee = parseFloat(document.getElementById('ifoodFee').value);
+            this.paymentFees.ifoodInvestment = parseFloat(document.getElementById('ifoodInvestment').value);
+
+            // Save to database
+            const feeKeys = Object.keys(this.paymentFees);
+            for (const key of feeKeys) {
+                try {
+                    const existing = await window.db.read('settings', { key });
+                    if (existing.length > 0) {
+                        await window.db.update('settings', existing[0].id, { 
+                            value: this.paymentFees[key].toString(),
+                            updated_at: new Date().toISOString()
+                        });
+                    } else {
+                        await window.db.create('settings', {
+                            key,
+                            value: this.paymentFees[key].toString(),
+                            updated_at: new Date().toISOString()
+                        });
+                    }
+                } catch (error) {
+                    console.error(`Error saving ${key}:`, error);
+                }
+            }
+
+            this.showNotification('Taxas de pagamento salvas!', 'success');
+        } catch (error) {
+            console.error('Error saving payment fees:', error);
+            this.showNotification('Erro ao salvar taxas', 'error');
+        }
     }
 
     showSection(sectionName) {
@@ -134,9 +279,14 @@ class RestaurantApp {
                 this.loadAnalytics();
                 break;
         }
+
+        // Reset analytics filter when switching away
+        if (sectionName !== 'analytics') {
+            this.analyticsPeriod = null;
+            this.resetAnalyticsFilterInputs();
+        }
     }
 
-    // Enhanced sync status management
     updateSyncIndicator(status = 'idle', pendingChanges = 0) {
         const indicator = document.getElementById('sync-indicator');
         const badge = document.getElementById('sync-badge');
@@ -183,7 +333,6 @@ class RestaurantApp {
         }
     }
 
-    // Update sync report data
     updateSyncReport() {
         const changeLog = JSON.parse(localStorage.getItem('changeLog') || '[]');
         const lastSync = localStorage.getItem('lastSync');
@@ -277,7 +426,8 @@ class RestaurantApp {
             'update': 'fa-edit',
             'delete': 'fa-trash',
             'complete': 'fa-check',
-            'deduction': 'fa-minus'
+            'deduction': 'fa-minus',
+            'cancel': 'fa-times'
         };
         return icons[operation] || 'fa-circle';
     }
@@ -291,7 +441,8 @@ class RestaurantApp {
             'expenses': 'despesas',
             'purchase_completion': 'finalização de compra',
             'menu_price_adjustment': 'ajuste de preço do menu',
-            'stock_movement': 'movimentação de estoque'
+            'stock_movement': 'movimentação de estoque',
+            'order_cancellation': 'cancelamento de pedido'
         };
         
         const tableName = tableNames[activity.table] || activity.table;
@@ -300,10 +451,17 @@ class RestaurantApp {
             'update': 'Atualizado',
             'delete': 'Excluído',
             'complete': 'Finalizado',
-            'deduction': 'Baixa no estoque'
+            'deduction': 'Baixa no estoque',
+            'cancel': 'Cancelado'
         };
         
         const operationName = operations[activity.operation] || activity.operation;
+        
+        // Special handling for order cancellation
+        if (activity.table === 'order_cancellation') {
+            const data = activity.data;
+            return `Pedido #${data.orderId} cancelado por ${data.cancelled_by} - ${data.customer} (${this.formatCurrency(data.total)})`;
+        }
         
         // Special handling for stock movements
         if (activity.table === 'stock_movement') {
@@ -337,25 +495,29 @@ class RestaurantApp {
             const inventory = await window.db.read('inventory');
             const expenses = await window.db.read('expenses');
 
-            // Calculate today's metrics
+            // Calculate today's metrics (excluding cancelled orders)
             const today = new Date().toDateString();
             const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toDateString();
             
             const todayOrders = orders.filter(order => 
-                new Date(order.created_at || order.date).toDateString() === today
+                new Date(order.created_at || order.date).toDateString() === today &&
+                order.status !== 'cancelled'
             );
             const yesterdayOrders = orders.filter(order => 
-                new Date(order.created_at || order.date).toDateString() === yesterday
+                new Date(order.created_at || order.date).toDateString() === yesterday &&
+                order.status !== 'cancelled'
             );
 
             const todaySales = todayOrders.reduce((sum, order) => sum + (order.total || 0), 0);
             const yesterdaySales = yesterdayOrders.reduce((sum, order) => sum + (order.total || 0), 0);
             
-            // Calculate profit (sales - costs)
+            // Calculate profit (sales - costs - fees)
             const todayCosts = this.calculateOrdersCosts(todayOrders, menu);
             const yesterdayCosts = this.calculateOrdersCosts(yesterdayOrders, menu);
-            const todayProfit = todaySales - todayCosts;
-            const yesterdayProfit = yesterdaySales - yesterdayCosts;
+            const todayFees = this.calculateOrdersFees(todayOrders);
+            const yesterdayFees = this.calculateOrdersFees(yesterdayOrders);
+            const todayProfit = todaySales - todayCosts - todayFees;
+            const yesterdayProfit = yesterdaySales - yesterdayCosts - yesterdayFees;
 
             // Calculate stock alerts
             const criticalStock = inventory.filter(item => item.quantity <= 0).length;
@@ -396,6 +558,17 @@ class RestaurantApp {
         }, 0);
     }
 
+    calculateOrdersFees(orders) {
+        return orders.reduce((totalFees, order) => {
+            const fee = this.calculatePaymentFee(
+                order.total || 0, 
+                order.payment_method || 'dinheiro', 
+                order.platform || 'vendas'
+            );
+            return totalFees + fee;
+        }, 0);
+    }
+
     updateMetricChange(elementId, current, previous) {
         const element = document.getElementById(elementId);
         if (!element) return;
@@ -417,7 +590,7 @@ class RestaurantApp {
         const ctx = document.getElementById('salesChart');
         if (!ctx) return;
 
-        // Prepare data for the last 7 days
+        // Prepare data for the last 7 days (excluding cancelled orders)
         const last7Days = [];
         const salesData = [];
         const profitData = [];
@@ -430,14 +603,16 @@ class RestaurantApp {
             last7Days.push(date.toLocaleDateString('pt-BR', { weekday: 'short' }));
             
             const dayOrders = orders.filter(order => 
-                new Date(order.created_at || order.date).toDateString() === dateString
+                new Date(order.created_at || order.date).toDateString() === dateString &&
+                order.status !== 'cancelled'
             );
             
             const dayTotal = dayOrders.reduce((sum, order) => sum + (order.total || 0), 0);
             const dayCosts = this.calculateOrdersCosts(dayOrders, menu);
+            const dayFees = this.calculateOrdersFees(dayOrders);
             
             salesData.push(dayTotal);
-            profitData.push(dayTotal - dayCosts);
+            profitData.push(dayTotal - dayCosts - dayFees);
         }
 
         // Destroy existing chart if it exists
@@ -500,13 +675,13 @@ class RestaurantApp {
         const container = document.getElementById('financialSummary');
         if (!container) return;
 
-        // Calculate this month's data
+        // Calculate this month's data (excluding cancelled orders)
         const thisMonth = new Date();
         const startOfMonth = new Date(thisMonth.getFullYear(), thisMonth.getMonth(), 1);
         
         const monthlyOrders = orders.filter(order => {
             const orderDate = new Date(order.created_at || order.date);
-            return orderDate >= startOfMonth;
+            return orderDate >= startOfMonth && order.status !== 'cancelled';
         });
 
         const monthlyExpenses = expenses.filter(expense => {
@@ -516,8 +691,9 @@ class RestaurantApp {
 
         const revenue = monthlyOrders.reduce((sum, order) => sum + (order.total || 0), 0);
         const costs = this.calculateOrdersCosts(monthlyOrders, menu);
+        const fees = this.calculateOrdersFees(monthlyOrders);
         const expensesTotal = monthlyExpenses.reduce((sum, expense) => sum + (expense.amount || 0), 0);
-        const profit = revenue - costs - expensesTotal;
+        const profit = revenue - costs - fees - expensesTotal;
 
         container.innerHTML = `
             <div class="financial-summary-item">
@@ -527,6 +703,10 @@ class RestaurantApp {
             <div class="financial-summary-item">
                 <span class="financial-summary-label">Custos dos Produtos</span>
                 <span class="financial-summary-value negative">${this.formatCurrency(costs)}</span>
+            </div>
+            <div class="financial-summary-item">
+                <span class="financial-summary-label">Taxas de Pagamento</span>
+                <span class="financial-summary-value negative">${this.formatCurrency(fees)}</span>
             </div>
             <div class="financial-summary-item">
                 <span class="financial-summary-label">Despesas Operacionais</span>
@@ -623,8 +803,8 @@ class RestaurantApp {
 
     getCategoryName(category) {
         const categoryNames = {
-            'entradas': 'Dogao do Canela Fina',
-            'pratos': 'Burger e Otakus', 
+            'dogao': 'Dogão do Canela Fina',
+            'burger': 'Burger e Otakus',
             'sobremesas': 'Sobremesas',
             'bebidas': 'Bebidas'
         };
@@ -642,36 +822,35 @@ class RestaurantApp {
                 price: parseFloat(document.getElementById('menuPrice').value),
                 cost_price: calculatedCostPrice,
                 description: document.getElementById('menuDescription').value,
-                created_at: new Date().toISOString(),
                 updated_at: new Date().toISOString()
             };
 
             // Check if we're editing or creating
             const editingId = document.getElementById('menuForm').dataset.editingId;
             let menuId;
-            
+
             if (editingId) {
-                // Update existing menu item
-                formData.updated_at = new Date().toISOString();
+                // Update existing menu item instead of creating new one
                 await window.db.update('menu', parseInt(editingId), formData);
                 menuId = parseInt(editingId);
-                
+
                 // Delete existing ingredients for this menu item
                 const existingIngredients = await window.db.read('menu_ingredients', { menu_id: menuId });
                 for (const ingredient of existingIngredients) {
                     await window.db.delete('menu_ingredients', ingredient.id);
                 }
-                
+
                 this.showNotification('Item do menu atualizado com sucesso!', 'success');
             } else {
                 // Create new menu item
+                formData.created_at = new Date().toISOString();
                 menuId = await window.db.create('menu', formData);
                 this.showNotification('Item adicionado ao menu com ingredientes!', 'success');
             }
-            
+
             // Save menu ingredients
             await this.saveMenuIngredients(menuId);
-            
+
             this.closeModal('menuModal');
             this.loadMenu();
         } catch (error) {
@@ -798,23 +977,32 @@ class RestaurantApp {
                 this.showNotification('Item não encontrado', 'error');
                 return;
             }
-            
+
             const menuItem = menuItems[0];
-            
-            // Populate form with existing data
+
             document.getElementById('menuName').value = menuItem.name;
             document.getElementById('menuCategory').value = menuItem.category;
             document.getElementById('menuPrice').value = menuItem.price;
             document.getElementById('menuCostPrice').value = menuItem.cost_price || 0;
             document.getElementById('menuDescription').value = menuItem.description || '';
-            
-            // Set editing mode
-            document.getElementById('menuForm').dataset.editingId = id;
-            document.querySelector('#menuModal .modal-header h3').textContent = 'Editar Item do Menu';
-            
-            // Load existing ingredients
-            await this.loadMenuIngredientsForEdit(id);
-            
+
+            // Set editing mode WITH UNIQUE IDENTIFIER
+            // (Remover dataset.editingId se existir)
+            delete document.getElementById('menuForm').dataset.editingId;
+            document.querySelector('#menuModal .modal-header h3').textContent = 'Duplicar Item do Menu';
+
+            // Adiciona botão duplicar visível
+            let dupBtn = document.querySelector('#menuModal .form-actions .duplicate-btn');
+            if(!dupBtn) {
+                dupBtn = document.createElement('button');
+                dupBtn.type = "button";
+                dupBtn.className = "btn btn-secondary duplicate-btn";
+                dupBtn.innerHTML = '<i class="fas fa-copy"></i> Duplicar';
+                dupBtn.onclick = () => this.duplicateMenuItem(id);
+                document.querySelector('#menuModal .form-actions').prepend(dupBtn);
+            }
+            dupBtn.style.display = 'inline-flex';
+
             this.openModal('menuModal');
         } catch (error) {
             console.error('Error loading menu item for edit:', error);
@@ -822,39 +1010,32 @@ class RestaurantApp {
         }
     }
 
-    async loadMenuIngredientsForEdit(menuId) {
-        const menuIngredients = await window.db.read('menu_ingredients', { menu_id: menuId });
-        const inventory = await window.db.read('inventory');
-        const container = document.getElementById('menuIngredients');
-        
-        // Clear existing ingredients
-        container.innerHTML = '';
-        
-        // Add existing ingredients
-        for (const ingredient of menuIngredients) {
-            const ingredientDiv = document.createElement('div');
-            ingredientDiv.className = 'menu-ingredient-row';
-            ingredientDiv.innerHTML = `
-                <select class="ingredient-select" required onchange="app.calculateMenuCostFromIngredients()">
-                    <option value="">Selecione um ingrediente</option>
-                    ${inventory.map(item => `
-                        <option value="${item.id}" ${item.id === ingredient.inventory_id ? 'selected' : ''} data-cost="${item.cost_price || 0}">
-                            ${item.name} (${item.unit}) - Estoque: ${item.quantity} - Custo: ${this.formatCurrency(item.cost_price || 0)}
-                        </option>
-                    `).join('')}
-                </select>
-                <input type="number" class="ingredient-quantity" min="0.01" step="0.01" 
-                       value="${ingredient.quantity_needed}" placeholder="Quantidade necessária" required onchange="app.calculateMenuCostFromIngredients()">
-                <button type="button" class="btn btn-small btn-danger" onclick="app.removeMenuIngredient(this)">
-                    <i class="fas fa-trash"></i>
-                </button>
-            `;
-            
-            container.appendChild(ingredientDiv);
+    async duplicateMenuItem(id) {
+        // Load item again and open modal, but do NOT set editingId (so it's a CREATE operation with prefilled values)
+        try {
+            const menuItems = await window.db.read('menu', { id: id });
+            if (menuItems.length === 0) {
+                this.showNotification('Item não encontrado', 'error');
+                return;
+            }
+            const menuItem = menuItems[0];
+            document.getElementById('menuName').value = menuItem.name + " (Cópia)";
+            document.getElementById('menuCategory').value = menuItem.category;
+            document.getElementById('menuPrice').value = menuItem.price;
+            document.getElementById('menuCostPrice').value = menuItem.cost_price || 0;
+            document.getElementById('menuDescription').value = menuItem.description || '';
+
+            delete document.getElementById('menuForm').dataset.editingId;
+            document.querySelector('#menuModal .modal-header h3').textContent = 'Duplicar Item do Menu';
+
+            let dupBtn = document.querySelector('#menuModal .form-actions .duplicate-btn');
+            if (dupBtn) dupBtn.style.display = "none";
+
+            this.openModal('menuModal');
+        } catch (error) {
+            console.error('Erro ao duplicar menu:', error);
+            this.showNotification('Erro ao duplicar item do menu', 'error');
         }
-        
-        // Calculate initial cost
-        await this.calculateMenuCostFromIngredients();
     }
 
     async deleteMenuItem(id) {
@@ -895,9 +1076,39 @@ class RestaurantApp {
             return;
         }
 
-        container.innerHTML = orders.map(order => {
+        // Detectar status filtrado pelo tab ativo
+        const activeTab = document.querySelector('.orders-tabs .tab-btn.active');
+        const tabStatus = activeTab ? activeTab.dataset.status : 'all';
+
+        let filteredOrders = [];
+        if (tabStatus === 'all') {
+            filteredOrders = orders.filter(order => order.status !== 'cancelled' && order.status !== 'delivered');
+        } else if (tabStatus === 'pending' || tabStatus === 'preparing' || tabStatus === 'ready') {
+            filteredOrders = orders.filter(order => order.status === tabStatus && order.status !== 'cancelled' && order.status !== 'delivered');
+        } else if (tabStatus === 'delivered') {
+            filteredOrders = orders.filter(order => order.status === 'delivered');
+        } else if (tabStatus === 'cancelled') {
+            filteredOrders = orders.filter(order => order.status === 'cancelled');
+        } else {
+            filteredOrders = orders.filter(order => order.status !== 'cancelled' && order.status !== 'delivered');
+        }
+
+        if (filteredOrders.length === 0) {
+            let msg = '';
+            if (tabStatus === 'cancelled') msg = '<p>Nenhum pedido cancelado.</p>';
+            else if (tabStatus === 'delivered') msg = '<p>Nenhum pedido entregue.</p>';
+            else msg = '<p>Nenhum pedido encontrado.</p>';
+            container.innerHTML = msg;
+            return;
+        }
+
+        container.innerHTML = filteredOrders.map(order => {
             const items = typeof order.items === 'string' ? JSON.parse(order.items) : order.items || [];
             const itemsText = items.map(item => `${item.quantity}x ${item.name}`).join(', ');
+            // NOVO: Adicionando plataforma na exibição com fallback "Vendas Internas" se vazio
+            const platform = order.platform === 'ifood' ? 'Ifood' : 'Vendas Internas';
+            const paymentMethod = this.getPaymentMethodText(order.payment_method, order.platform);
+            const fee = this.calculatePaymentFee(order.total || 0, order.payment_method || 'dinheiro', order.platform || 'vendas');
             
             return `
                 <div class="order-item">
@@ -905,16 +1116,33 @@ class RestaurantApp {
                         <h4>Pedido #${order.id}</h4>
                         <div class="order-details">
                             <p><strong>Cliente:</strong> ${order.customer}</p>
-                            <p><strong>Mesa:</strong> ${order.table_number || 'N/A'}</p>
+                            <p><strong>Plataforma:</strong> ${platform}</p>
+                            <p><strong>Pagamento:</strong> ${paymentMethod}</p>
                             <p><strong>Itens:</strong> ${itemsText}</p>
+                            <p><strong>Subtotal:</strong> ${this.formatCurrency((order.total || 0) + fee)}</p>
+                            ${fee > 0 ? `<p><strong>Taxa:</strong> -${this.formatCurrency(fee)}</p>` : ''}
                             <p><strong>Total:</strong> ${this.formatCurrency(order.total)}</p>
+                            ${order.status === 'cancelled' ? `
+                                <p><strong>Cancelado por:</strong> ${order.cancelled_by || 'N/A'}</p>
+                                <p><strong>Motivo:</strong> ${order.cancellation_reason || 'Não informado'}</p>
+                                <p><strong>Data cancelamento:</strong> ${new Date(order.cancelled_at).toLocaleString('pt-BR')}</p>
+                            ` : ''}
                         </div>
                     </div>
                     <div class="order-actions">
                         <span class="order-status ${order.status}">${this.getStatusText(order.status)}</span>
-                        <button class="btn btn-small btn-primary" onclick="app.updateOrderStatus(${order.id}, '${this.getNextStatus(order.status)}')">
-                            ${this.getNextStatusText(order.status)}
-                        </button>
+                        ${order.status !== 'cancelled' && order.status !== 'delivered' ? `
+                            <button class="btn btn-small btn-primary" onclick="app.updateOrderStatus(${order.id}, '${this.getNextStatus(order.status)}')">
+                                ${this.getNextStatusText(order.status)}
+                            </button>
+                            <button class="btn btn-small btn-danger" onclick="app.cancelOrder(${order.id})">
+                                <i class="fas fa-times"></i> Cancelar
+                            </button>
+                        ` : order.status === 'delivered' ? `
+                            <button class="btn btn-small btn-danger" onclick="app.cancelOrder(${order.id})">
+                                <i class="fas fa-times"></i> Cancelar
+                            </button>
+                        ` : ''}
                     </div>
                 </div>
             `;
@@ -934,13 +1162,76 @@ class RestaurantApp {
         });
     }
 
+    async cancelOrder(orderId) {
+        try {
+            const orders = await window.db.read('orders', { id: orderId });
+            if (orders.length === 0) {
+                this.showNotification('Pedido não encontrado', 'error');
+                return;
+            }
+
+            const order = orders[0];
+            const items = typeof order.items === 'string' ? JSON.parse(order.items) : order.items || [];
+            const itemsText = items.map(item => `${item.quantity}x ${item.name}`).join(', ');
+            // NOVO: Adicionando plataforma na exibição com fallback "Vendas Internas" se vazio
+            const platform = order.platform === 'ifood' ? 'Ifood' : 'Vendas Internas';
+            
+            // Populate order info in modal
+            document.getElementById('cancelOrderInfo').innerHTML = `
+                <div style="display: grid; gap: 0.5rem; font-size: 0.875rem;">
+                    <div><strong>Pedido:</strong> #${order.id}</div>
+                    <div><strong>Cliente:</strong> ${order.customer}</div>
+                    <div><strong>Plataforma:</strong> ${platform}</div>
+                    <div><strong>Status atual:</strong> ${this.getStatusText(order.status)}</div>
+                    <div><strong>Itens:</strong> ${itemsText}</div>
+                    <div><strong>Valor:</strong> ${this.formatCurrency(order.total)}</div>
+                    <div><strong>Data:</strong> ${new Date(order.created_at || order.date).toLocaleString('pt-BR')}</div>
+                </div>
+            `;
+            
+            // Store order ID for form submission
+            document.getElementById('cancelOrderForm').dataset.orderId = orderId;
+            
+            // Clear form fields
+            document.getElementById('cancelOrderBy').value = '';
+            document.getElementById('cancelOrderReason').value = '';
+            
+            // Show modal
+            this.openModal('cancelOrderModal');
+            
+        } catch (error) {
+            console.error('Error preparing order cancellation:', error);
+            this.showNotification('Erro ao preparar cancelamento', 'error');
+        }
+    }
+
     async handleOrderSubmit() {
         try {
+            if (this.orderItems.length === 0) {
+                this.showNotification('Adicione pelo menos um item ao pedido', 'warning');
+                return;
+            }
+
+            const platform = document.getElementById('orderPlatform').value;
+            const paymentMethod = platform === 'ifood' ? 'ifood' : document.getElementById('orderPaymentMethod').value;
+
+            if (!paymentMethod) {
+                this.showNotification('Selecione a forma de pagamento', 'warning');
+                return;
+            }
+
+            const subtotal = this.orderSubtotal;
+            const fee = this.orderFee;
+            const total = subtotal - fee; // Total que o cliente paga (já com desconto da taxa)
+
             const formData = {
                 customer: document.getElementById('orderCustomer').value,
-                table_number: parseInt(document.getElementById('orderTable').value) || null,
+                platform: platform,
+                payment_method: paymentMethod,
                 items: JSON.stringify(this.orderItems),
-                total: this.orderTotal,
+                total: total,
+                subtotal: subtotal,
+                fee: fee,
                 status: 'pending',
                 date: new Date().toISOString()
             };
@@ -976,11 +1267,16 @@ class RestaurantApp {
             if (stockMovements.length > 0) {
                 message += ` Estoque atualizado para ${stockMovements.length} ingredientes.`;
             }
+            if (fee > 0) {
+                message += ` Taxa aplicada: ${this.formatCurrency(fee)}.`;
+            }
             
             this.showNotification(message, 'success');
             
             // Reset order form
             this.orderItems = [];
+            this.orderSubtotal = 0;
+            this.orderFee = 0;
             this.orderTotal = 0;
         } catch (error) {
             console.error('Error creating order:', error);
@@ -989,15 +1285,15 @@ class RestaurantApp {
     }
 
     async addOrderItem() {
-        const menu = await window.db.read('menu');
+        const menuItems = await window.db.read('menu');
         const container = document.getElementById('orderItems');
         
         const itemDiv = document.createElement('div');
         itemDiv.className = 'order-item-row';
         itemDiv.innerHTML = `
-            <select class="order-item-select" onchange="app.updateOrderTotal()">
+            <select class="order-item-select" onchange="app.updateOrderTotal()" required>
                 <option value="">Selecione um item</option>
-                ${menu.map(item => `<option value="${item.id}" data-price="${item.price}">${item.name} - ${this.formatCurrency(item.price)}</option>`).join('')}
+                ${menuItems.map(item => `<option value="${item.id}" data-price="${item.price || 0}">${item.name} (${this.getCategoryName(item.category)}) - Valor: ${this.formatCurrency(item.price || 0)}</option>`).join('')}
             </select>
             <input type="number" class="order-item-quantity" min="1" value="1" onchange="app.updateOrderTotal()">
             <button type="button" class="btn btn-small btn-danger" onclick="app.removeOrderItem(this)">
@@ -1016,7 +1312,7 @@ class RestaurantApp {
     updateOrderTotal() {
         const orderItems = document.querySelectorAll('.order-item-row');
         this.orderItems = [];
-        this.orderTotal = 0;
+        this.orderSubtotal = 0;
         
         orderItems.forEach(row => {
             const select = row.querySelector('.order-item-select');
@@ -1034,11 +1330,52 @@ class RestaurantApp {
                     quantity: quantity
                 });
                 
-                this.orderTotal += price * quantity;
+                this.orderSubtotal += price * quantity;
             }
         });
         
+        // Calculate fees
+        const platform = document.getElementById('orderPlatform').value;
+        const paymentMethod = platform === 'ifood' ? 'ifood' : document.getElementById('orderPaymentMethod').value;
+        
+        this.orderFee = this.calculatePaymentFee(this.orderSubtotal, paymentMethod || 'dinheiro', platform);
+        this.orderTotal = this.orderSubtotal - this.orderFee;
+        
+        // Update UI
+        document.getElementById('orderSubtotal').textContent = this.formatCurrency(this.orderSubtotal);
         document.getElementById('orderTotal').textContent = this.formatCurrency(this.orderTotal);
+        
+        // Update fee info
+        const feeInfo = document.getElementById('orderFeeInfo');
+        if (this.orderFee > 0) {
+            const feeText = platform === 'ifood' 
+                ? `Taxa Ifood (${this.paymentFees.ifoodFee}%) + Investimento (${this.paymentFees.ifoodInvestment}%): -${this.formatCurrency(this.orderFee)}`
+                : `Taxa ${this.getPaymentMethodText(paymentMethod, platform)} (${this.getPaymentFeePercentage(paymentMethod)}%): -${this.formatCurrency(this.orderFee)}`;
+            feeInfo.innerHTML = `<span style="color: #dc2626;">${feeText}</span>`;
+        } else {
+            feeInfo.innerHTML = '';
+        }
+    }
+
+    getPaymentMethodText(method, platform) {
+        if (platform === 'ifood') return 'Ifood (Taxa + Investimento)';
+        
+        const methods = {
+            'dinheiro': 'Dinheiro',
+            'credito': 'Cartão de Crédito',
+            'debito': 'Cartão de Débito',
+            'pix': 'PIX'
+        };
+        return methods[method] || 'Não informado';
+    }
+
+    getPaymentFeePercentage(method) {
+        const fees = {
+            'credito': this.paymentFees.creditCardFee,
+            'debito': this.paymentFees.debitCardFee,
+            'pix': this.paymentFees.pixFee
+        };
+        return fees[method] || 0;
     }
 
     async updateOrderStatus(id, newStatus) {
@@ -1057,7 +1394,8 @@ class RestaurantApp {
             'pending': 'Pendente',
             'preparing': 'Preparando',
             'ready': 'Pronto',
-            'delivered': 'Entregue'
+            'delivered': 'Entregue',
+            'cancelled': 'Cancelado'
         };
         return statusMap[status] || status;
     }
@@ -1080,6 +1418,68 @@ class RestaurantApp {
             'delivered': 'Entregar'
         };
         return textMap[nextStatus] || 'Atualizar';
+    }
+
+    async handleCancelOrderSubmit() {
+        try {
+            const orderId = document.getElementById('cancelOrderForm').dataset.orderId;
+            const cancelledBy = document.getElementById('cancelOrderBy').value.trim();
+            const cancellationReason = document.getElementById('cancelOrderReason').value.trim();
+            
+            if (!orderId || !cancelledBy) {
+                this.showNotification('Por favor, preencha quem está cancelando o pedido', 'warning');
+                return;
+            }
+
+            const orders = await window.db.read('orders', { id: parseInt(orderId) });
+            if (orders.length === 0) {
+                this.showNotification('Pedido não encontrado', 'error');
+                return;
+            }
+
+            const order = orders[0];
+            const cancelledAt = new Date().toISOString();
+            
+            // Update order status to cancelled
+            await window.db.update('orders', parseInt(orderId), {
+                status: 'cancelled',
+                cancelled_by: cancelledBy,
+                cancellation_reason: cancellationReason,
+                cancelled_at: cancelledAt
+            });
+
+            // Log the cancellation
+            const cancellationLog = {
+                id: Date.now(),
+                table: 'order_cancellation',
+                operation: 'cancel',
+                data: {
+                    orderId: parseInt(orderId),
+                    customer: order.customer,
+                    total: order.total,
+                    cancelled_by: cancelledBy,
+                    cancellation_reason: cancellationReason,
+                    cancelled_at: cancelledAt,
+                    original_status: order.status
+                },
+                timestamp: cancelledAt
+            };
+
+            window.db.logChange(cancellationLog);
+
+            this.closeModal('cancelOrderModal');
+            this.loadOrders();
+            this.showNotification('Pedido cancelado com sucesso!', 'success');
+            
+            // Update dashboard if visible
+            if (this.currentSection === 'dashboard') {
+                this.loadDashboard();
+            }
+
+        } catch (error) {
+            console.error('Error cancelling order:', error);
+            this.showNotification('Erro ao cancelar pedido: ' + error.message, 'error');
+        }
     }
 
     // Inventory Management
@@ -1138,8 +1538,8 @@ class RestaurantApp {
                     <td><span class="stock-status ${status}">${this.getStockStatusText(status)}</span></td>
                     <td>
                         <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
-                            <button class="btn btn-small btn-secondary" onclick="app.editInventoryItem(${item.id})" title="Editar Item">
-                                <i class="fas fa-edit"></i>
+                            <button class="btn btn-small btn-secondary" onclick="app.duplicateInventoryItem(${item.id})" title="Duplicar Item">
+                                <i class="fas fa-copy"></i>
                             </button>
                             <button class="btn btn-small btn-danger" onclick="app.deleteInventoryItem(${item.id})" title="Excluir Item">
                                 <i class="fas fa-trash"></i>
@@ -1198,7 +1598,7 @@ class RestaurantApp {
 
             // Check if we're editing or creating
             const editingId = document.getElementById('inventoryForm').dataset.editingId;
-            
+
             if (editingId) {
                 // Update existing inventory item
                 formData.updated_at = new Date().toISOString();
@@ -1215,12 +1615,11 @@ class RestaurantApp {
             }
 
             this.closeModal('inventoryModal');
-            
             // Force reload the inventory with a small delay to ensure database update is complete
             setTimeout(async () => {
                 await this.loadInventory();
             }, 100);
-            
+
         } catch (error) {
             console.error('Error saving inventory item:', error);
             this.showNotification('Erro ao salvar item no estoque: ' + error.message, 'error');
@@ -1234,25 +1633,66 @@ class RestaurantApp {
                 this.showNotification('Item não encontrado', 'error');
                 return;
             }
-            
+
             const inventoryItem = inventoryItems[0];
-            
-            // Populate form with existing data
+
             document.getElementById('inventoryName').value = inventoryItem.name;
             document.getElementById('inventoryQuantity').value = inventoryItem.quantity;
             document.getElementById('inventoryUnit').value = inventoryItem.unit;
             document.getElementById('inventoryMinStock').value = inventoryItem.min_stock;
             document.getElementById('inventoryCostPrice').value = inventoryItem.cost_price || 0;
             document.getElementById('inventorySupplier').value = inventoryItem.supplier || '';
-            
-            // Set editing mode
-            document.getElementById('inventoryForm').dataset.editingId = id;
-            document.querySelector('#inventoryModal .modal-header h3').textContent = 'Editar Item do Estoque';
-            
+
+            // Não permite edição, só duplicação
+            // (Remover dataset.editingId se existir)
+            delete document.getElementById('inventoryForm').dataset.editingId;
+            document.querySelector('#inventoryModal .modal-header h3').textContent = 'Duplicar Item do Estoque';
+
+            // Adiciona botão duplicar visível
+            let dupBtn = document.querySelector('#inventoryModal .form-actions .duplicate-btn');
+            if(!dupBtn) {
+                dupBtn = document.createElement('button');
+                dupBtn.type = "button";
+                dupBtn.className = "btn btn-secondary duplicate-btn";
+                dupBtn.innerHTML = '<i class="fas fa-copy"></i> Duplicar';
+                dupBtn.onclick = () => this.duplicateInventoryItem(id);
+                document.querySelector('#inventoryModal .form-actions').prepend(dupBtn);
+            }
+            dupBtn.style.display = 'inline-flex';
+
             this.openModal('inventoryModal');
         } catch (error) {
             console.error('Error loading inventory item for edit:', error);
             this.showNotification('Erro ao carregar item para edição', 'error');
+        }
+    }
+
+    async duplicateInventoryItem(id) {
+        // Load item again and open modal, but do NOT set editingId (so it's a CREATE operation with prefilled values)
+        try {
+            const inventoryItems = await window.db.read('inventory', { id: id });
+            if (inventoryItems.length === 0) {
+                this.showNotification('Item não encontrado', 'error');
+                return;
+            }
+            const inventoryItem = inventoryItems[0];
+            document.getElementById('inventoryName').value = inventoryItem.name + " (Cópia)";
+            document.getElementById('inventoryQuantity').value = inventoryItem.quantity;
+            document.getElementById('inventoryUnit').value = inventoryItem.unit;
+            document.getElementById('inventoryMinStock').value = inventoryItem.min_stock;
+            document.getElementById('inventoryCostPrice').value = inventoryItem.cost_price || 0;
+            document.getElementById('inventorySupplier').value = inventoryItem.supplier || '';
+
+            delete document.getElementById('inventoryForm').dataset.editingId;
+            document.querySelector('#inventoryModal .modal-header h3').textContent = 'Duplicar Item do Estoque';
+
+            let dupBtn = document.querySelector('#inventoryModal .form-actions .duplicate-btn');
+            if (dupBtn) dupBtn.style.display = "none";
+
+            this.openModal('inventoryModal');
+        } catch (error) {
+            console.error('Erro ao duplicar estoque:', error);
+            this.showNotification('Erro ao duplicar item do estoque', 'error');
         }
     }
 
@@ -1473,7 +1913,7 @@ class RestaurantApp {
             // Process each item
             for (const item of items) {
                 try {
-                    const inventoryItems = await window.db.read('inventory', { id: parseInt(item.id) });
+                    const inventoryItems = await window.db.read('inventory', { id: item.id });
                     if (inventoryItems.length > 0) {
                         const inventoryItem = inventoryItems[0];
                         const oldPrice = inventoryItem.cost_price || 0;
@@ -1489,7 +1929,7 @@ class RestaurantApp {
                         const newCostPrice = (totalOldValue + totalNewValue) / newQuantity;
                         
                         // Update inventory
-                        await window.db.update('inventory', parseInt(item.id), { 
+                        await window.db.update('inventory', item.id, { 
                             quantity: newQuantity,
                             cost_price: newCostPrice
                         });
@@ -1697,13 +2137,13 @@ class RestaurantApp {
     }
 
     renderFinancialSummary(orders, menu, expenses) {
-        // Calculate this month's data
+        // Calculate this month's data (excluding cancelled orders)
         const thisMonth = new Date();
         const startOfMonth = new Date(thisMonth.getFullYear(), thisMonth.getMonth(), 1);
         
         const monthlyOrders = orders.filter(order => {
             const orderDate = new Date(order.created_at || order.date);
-            return orderDate >= startOfMonth;
+            return orderDate >= startOfMonth && order.status !== 'cancelled';
         });
 
         const monthlyExpenses = expenses.filter(expense => {
@@ -1713,13 +2153,14 @@ class RestaurantApp {
 
         const revenue = monthlyOrders.reduce((sum, order) => sum + (order.total || 0), 0);
         const costs = this.calculateOrdersCosts(monthlyOrders, menu);
+        const fees = this.calculateOrdersFees(monthlyOrders);
         const expensesTotal = monthlyExpenses.reduce((sum, expense) => sum + (expense.amount || 0), 0);
-        const profit = revenue - costs - expensesTotal;
+        const profit = revenue - costs - fees - expensesTotal;
 
         // Update elements
         document.getElementById('monthlyRevenue').textContent = this.formatCurrency(revenue);
         document.getElementById('monthlyCosts').textContent = this.formatCurrency(costs);
-        document.getElementById('monthlyExpenses').textContent = this.formatCurrency(expensesTotal);
+        document.getElementById('monthlyExpenses').textContent = this.formatCurrency(expensesTotal + fees);
         document.getElementById('monthlyProfit').textContent = this.formatCurrency(profit);
         
         // Update profit color
@@ -1754,7 +2195,7 @@ class RestaurantApp {
         const ctx = document.getElementById('cashFlowChart');
         if (!ctx) return;
 
-        // Prepare data for the last 6 months
+        // Prepare data for the last 6 months (excluding cancelled orders)
         const last6Months = [];
         const revenueData = [];
         const expenseData = [];
@@ -1770,7 +2211,7 @@ class RestaurantApp {
             
             const monthOrders = orders.filter(order => {
                 const orderDate = new Date(order.created_at || order.date);
-                return orderDate >= monthStart && orderDate <= monthEnd;
+                return orderDate >= monthStart && orderDate <= monthEnd && order.status !== 'cancelled';
             });
             
             const monthExpenses = expenses.filter(expense => {
@@ -1780,8 +2221,9 @@ class RestaurantApp {
             
             const revenue = monthOrders.reduce((sum, order) => sum + (order.total || 0), 0);
             const costs = this.calculateOrdersCosts(monthOrders, menu);
+            const fees = this.calculateOrdersFees(monthOrders);
             const expensesTotal = monthExpenses.reduce((sum, expense) => sum + (expense.amount || 0), 0);
-            const totalExpenses = costs + expensesTotal;
+            const totalExpenses = costs + fees + expensesTotal;
             
             revenueData.push(revenue);
             expenseData.push(totalExpenses);
@@ -1799,28 +2241,30 @@ class RestaurantApp {
             const Chart = ChartModule.default;
             
             this.charts.cashFlow = new Chart(ctx, {
-                type: 'bar',
+                type: 'line',
                 data: {
                     labels: last6Months,
                     datasets: [{
                         label: 'Receita',
                         data: revenueData,
-                        backgroundColor: '#059669',
                         borderColor: '#059669',
-                        borderWidth: 1
+                        backgroundColor: 'rgba(5, 150, 105, 0.1)',
+                        tension: 0.4,
+                        fill: false
                     }, {
                         label: 'Despesas',
                         data: expenseData,
-                        backgroundColor: '#dc2626',
                         borderColor: '#dc2626',
-                        borderWidth: 1
+                        backgroundColor: 'rgba(220, 38, 38, 0.1)',
+                        tension: 0.4,
+                        fill: false
                     }, {
                         label: 'Lucro',
                         data: profitData,
-                        backgroundColor: '#0891b2',
                         borderColor: '#0891b2',
-                        borderWidth: 1,
-                        type: 'line'
+                        backgroundColor: 'rgba(8, 145, 178, 0.1)',
+                        tension: 0.4,
+                        fill: false
                     }]
                 },
                 options: {
@@ -1871,145 +2315,825 @@ class RestaurantApp {
     // Analytics
     async loadAnalytics() {
         try {
-            const orders = await window.db.read('orders');
+            // Carrega todos, mas sempre filtra os pedidos pelo período global se setado
+            const ordersRaw = await window.db.read('orders');
             const menu = await window.db.read('menu');
-            
-            this.loadCategoryChart(orders, menu);
-            this.loadTrendChart(orders);
+            const inventory = await window.db.read('inventory');
+            const expenses = await window.db.read('expenses');
+            const changeLog = JSON.parse(localStorage.getItem('changeLog') || '[]');
+
+            // -- GARANTE: Não é null para loaders abaixo
+            const orders = this.filterOrdersByAnalyticsPeriod
+                ? this.filterOrdersByAnalyticsPeriod(ordersRaw)
+                : ordersRaw;
+
+            // --- Se não houver pedidos/itens, mostrar mensagens ou gráficos/relatórios zerados ---
+
+            // Gráfico de vendas por categoria
+            await this.loadCategoryChart(orders, menu);
+
+            // Lista de vendas por categoria (texto explicativo)
+            this.renderSalesCategoryList(orders, menu);
+
+            // Tendência mensal (gráfico: linha única de vendas, linha única qtd pedidos)
+            await this.loadTrendChart(orders);
+
+            // Ticket médio mensal
+            this.renderAvgOrderValueTrend(orders, menu);
+
+            // Top 10 itens do menu vendidos
+            this.renderTopMenuItems(orders, menu);
+
+            // Top clientes
+            this.renderTopClients(orders, menu);
+
+            // Estatísticas gerais (resumos)
+            this.renderGeneralStats(orders, menu, expenses);
+
+            // Gráfico de pedidos por plataforma (pie)
+            await this.renderOrdersByPlatformChart(orders, menu);
+
+            // NOVO: Relatório específico de cancelamentos
+            this.renderCancellationReport(changeLog);
+
+            // NOVO: Relatório de taxas e descontos
+            this.renderFeesReport(orders);
+
+            // Movimentação de estoque (logs)
+            this.renderStockMovementReport(changeLog, inventory);
+
         } catch (error) {
             console.error('Error loading analytics:', error);
+
+            // Solução: Limpa TODOS OS CANVAS, reseta todos com mensagem clara
+            const reportIds = [
+                'categoryChart', 'topSalesCategory',
+                'trendChart', 'avgOrderValueTrend',
+                'topMenuItems', 'topClients',
+                'generalStats', 'ordersByPlatformChart',
+                'cancellationReport', 'feesReport',
+                'stockMovementReport'
+            ];
+            reportIds.forEach(id => {
+                const el = document.getElementById(id);
+                if (!el) return;
+
+                // CANVAS: Limpa e exibe texto (erro)
+                if (el.tagName === "CANVAS") {
+                    const ctx = el.getContext && el.getContext('2d');
+                    if (ctx) {
+                        ctx.clearRect(0, 0, el.width, el.height);
+                        // Pode opcionalmente exibir o erro desenhando na tela
+                        ctx.save();
+                        ctx.font = "16px Arial";
+                        ctx.fillStyle = "#dc2626";
+                        ctx.textAlign = "center";
+                        ctx.fillText("Erro ao carregar gráfico", el.width/2, el.height/2);
+                        ctx.restore();
+                    }
+                } else {
+                    el.innerHTML = '<em>Erro ao carregar relatório.</em>';
+                }
+            });
         }
+    }
+
+    filterOrdersByAnalyticsPeriod(orders) {
+        if (!this.analyticsPeriod || (!this.analyticsPeriod.from && !this.analyticsPeriod.to)) {
+            // Exclude cancelled orders by default
+            return orders.filter(order => order.status !== 'cancelled');
+        }
+        const {from, to} = this.analyticsPeriod;
+        return orders.filter(order => {
+            if (order.status === 'cancelled') return false;
+            const createdAt = new Date(order.created_at || order.date);
+            if (from && createdAt < from) return false;
+            if (to && createdAt > to) return false;
+            return true;
+        });
+    }
+
+    applyAnalyticsPeriodFilter() {
+        // Lê datas dos campos
+        const dateFromInput = document.getElementById('analyticsDateFrom').value;
+        const dateToInput   = document.getElementById('analyticsDateTo').value;
+        // Se ambos vazios, ignora
+        if (!dateFromInput && !dateToInput) {
+            this.analyticsPeriod = null;
+            this.loadAnalytics();
+            return;
+        }
+        let fromDate = dateFromInput ? new Date(dateFromInput + "T00:00:00") : null;
+        let toDate   = dateToInput   ? new Date(dateToInput   + "T23:59:59") : null;
+        // Sanidade: inverte datas se from > to
+        if (fromDate && toDate && fromDate > toDate) {
+            const temp = fromDate; fromDate = toDate; toDate = temp;
+        }
+        this.analyticsPeriod = {from: fromDate, to: toDate};
+        document.getElementById('analyticsClearFilterBtn').style.display = '';
+        this.loadAnalytics();
+    }
+
+    clearAnalyticsPeriodFilter() {
+        this.analyticsPeriod = null;
+        document.getElementById('analyticsDateFrom').value = '';
+        document.getElementById('analyticsDateTo').value = '';
+        document.getElementById('analyticsClearFilterBtn').style.display = 'none';
+        this.loadAnalytics();
+    }
+
+    resetAnalyticsFilterInputs() {
+        const from = document.getElementById('analyticsDateFrom');
+        const to   = document.getElementById('analyticsDateTo');
+        if (from) from.value = '';
+        if (to)   to.value = '';
+        const btn = document.getElementById('analyticsClearFilterBtn');
+        if (btn) btn.style.display = 'none';
     }
 
     async loadCategoryChart(orders, menu) {
         const ctx = document.getElementById('categoryChart');
         if (!ctx) return;
-
-        // Calculate sales by category
-        const categoryData = {};
         
-        orders.forEach(order => {
+        // Calcula vendas por categoria (excluding cancelled orders)
+        const catMap = {};
+        orders.filter(order => order.status !== 'cancelled').forEach(order => {
             const items = typeof order.items === 'string' ? JSON.parse(order.items) : order.items || [];
             items.forEach(item => {
                 const menuItem = menu.find(m => m.id == item.id);
                 if (menuItem) {
-                    const category = menuItem.category;
-                    if (!categoryData[category]) {
-                        categoryData[category] = 0;
-                    }
-                    categoryData[category] += (item.price || 0) * (item.quantity || 1);
+                    const cat = this.getCategoryName(menuItem.category);
+                    if (!catMap[cat]) catMap[cat] = 0;
+                    catMap[cat] += (item.price || 0) * (item.quantity || 1);
                 }
             });
         });
 
-        const labels = Object.keys(categoryData);
-        const data = Object.values(categoryData);
+        // O filtro pode trazer meses sem vendas — removemos as categorias zeradas do gráfico (mas mantém na lista textual para comparação)
+        // Atenção: Mantém a ordem das categorias, para não duplicar/aparecer zerado no final
+        // Se estiver filtrado e não houver pedidos no período, exibe apenas vazio.
+        const cats = Object.keys(catMap);
+        const sales = cats.map(c => catMap[c]);
 
-        // Destroy existing chart if it exists
-        if (this.charts.category) {
-            this.charts.category.destroy();
+        // Limpa gráfico antigo
+        if (this.charts.categoryChart) {
+            this.charts.categoryChart.destroy();
         }
 
-        // Create new chart with fixed import
         try {
             const ChartModule = await import('https://cdn.jsdelivr.net/npm/chart.js@4.4.0/auto/+esm');
             const Chart = ChartModule.default;
-            
-            this.charts.category = new Chart(ctx, {
-                type: 'doughnut',
+            // Pie chart redondo conforme solicitado
+            this.charts.categoryChart = new Chart(ctx, {
+                type: 'pie',
                 data: {
-                    labels: labels,
+                    labels: cats,
+                    datasets: [
+                        {
+                            label: 'Vendas por Categoria',
+                            data: sales,
+                            backgroundColor: cats.map((c, i) => ["#059669", "#dc2626","#3b82f6", "#d97706", "#a21caf", "#eab308", "#0ea5e9", "#84cc16"][i%8])
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    plugins: { legend: { display: true, position: 'bottom' } }
+                }
+            });
+
+        } catch (e) {
+            console.error('Erro ao exibir gráfico de categoria:', e);
+        }
+    }
+
+    renderSalesCategoryList(orders, menu) {
+        const catSums = {};
+        orders.filter(order => order.status !== 'cancelled').forEach(order => {
+            const items = typeof order.items === 'string' ? JSON.parse(order.items) : order.items || [];
+            items.forEach(item => {
+                const menuItem = menu.find(m => m.id == item.id);
+                if (menuItem) {
+                    const cat = this.getCategoryName(menuItem.category);
+                    if (!catSums[cat]) catSums[cat] = 0;
+                    catSums[cat] += (item.price || 0) * (item.quantity || 1);
+                }
+            });
+        });
+        const cats = Object.keys(catSums);
+        const el = document.getElementById('topSalesCategory');
+        if (!el) return;
+        if (cats.length === 0) {
+            el.innerHTML = '<em>Sem vendas na categoria neste período.</em>'; return;
+        }
+        // Exibe rank e valores:
+        const sorted = cats
+            .map(cat => ({ cat, val: catSums[cat] }))
+            .sort((a, b) => b.val - a.val);
+
+        el.innerHTML = `
+        <ol class="top-sales-category-list">
+            ${sorted.map(({cat, val}, idx) => `
+                <li class="top-sales-category-item">
+                    <span class="top10-rank">#${idx + 1}</span>
+                    <span class="top-sales-category-name">${cat}</span>
+                    <span class="top-sales-category-sum">${this.formatCurrency(val)}</span>
+                </li>
+            `).join('')}
+        </ol>
+        `;
+    }
+
+    async loadTrendChart(orders) {
+        // Se houver filtro de período ativo e ambos campos preenchidos, mostrar meses exatos do período.
+        // Caso contrário, mostra os últimos 6 meses (como padrão).
+
+        let months = [];
+        let sales = [];
+        let qtys = [];
+
+        let usePeriod = false;
+        let fromDate, toDate;
+        if (this.analyticsPeriod && (this.analyticsPeriod.from || this.analyticsPeriod.to)) {
+            usePeriod = true;
+            fromDate = this.analyticsPeriod.from;
+            toDate = this.analyticsPeriod.to;
+        }
+
+        let ordersInPeriod = orders.slice();
+
+        if (usePeriod) {
+            // Se filtrando, selecionar apenas os pedidos dentro do range (excluding cancelled)
+            if (fromDate || toDate) {
+                ordersInPeriod = ordersInPeriod.filter(order => {
+                    if (order.status === 'cancelled') return false;
+                    const orderDate = new Date(order.created_at || order.date);
+                    if (fromDate && orderDate < fromDate) return false;
+                    if (toDate && orderDate > toDate) return false;
+                    return true;
+                });
+            }
+
+            // Gera meses presentes dentro do período filtrado (mesmo sem vendas)
+            months = [];
+            if (fromDate && toDate) {
+                // De from até to, lista todos os meses (inclusive)
+                let d = new Date(fromDate.getFullYear(), fromDate.getMonth(), 1);
+                const end = new Date(toDate.getFullYear(), toDate.getMonth(), 1);
+                while (d <= end) {
+                    months.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+                    d.setMonth(d.getMonth() + 1);
+                }
+            } else if (fromDate) {
+                let d = new Date(fromDate.getFullYear(), fromDate.getMonth(), 1);
+                const lastOrder = ordersInPeriod.length
+                  ? new Date(Math.max(...ordersInPeriod.map(o => +new Date(o.created_at || o.date))))
+                  : fromDate;
+                const end = new Date(lastOrder.getFullYear(), lastOrder.getMonth(), 1);
+                while (d <= end) {
+                    months.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+                    d.setMonth(d.getMonth() + 1);
+                }
+            } else if (toDate) {
+                // Mostra os 6 meses antes da data final
+                let d = new Date(toDate.getFullYear(), toDate.getMonth() - 5, 1);
+                const end = new Date(toDate.getFullYear(), toDate.getMonth(), 1);
+                while (d <= end) {
+                    months.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+                    d.setMonth(d.getMonth() + 1);
+                }
+            } else {
+                // Não deveria acontecer, mas como fallback pegar todos meses de pedidos presentes
+                let uniques = {};
+                ordersInPeriod.forEach(order => {
+                    const date = new Date(order.created_at || order.date);
+                    const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+                    uniques[key] = true;
+                });
+                months = Object.keys(uniques).sort();
+            }
+        } else {
+            // PADRÃO: últimos 6 meses (excluding cancelled orders)
+            months = [];
+            let dt = new Date();
+            dt.setDate(1);
+            for (let i = 5; i >= 0; i--) {
+                let d = new Date(dt.getFullYear(), dt.getMonth() - i, 1);
+                months.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+            }
+            // Filter out cancelled orders
+            ordersInPeriod = ordersInPeriod.filter(order => order.status !== 'cancelled');
+        }
+
+        sales = months.map(() => 0);
+        qtys = months.map(() => 0);
+
+        ordersInPeriod.forEach(order => {
+            const date = new Date(order.created_at || order.date);
+            const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+            const idx = months.indexOf(key);
+            if (idx !== -1) {
+                sales[idx] += (order.total || 0);
+                qtys[idx]++;
+            }
+        });
+
+        // Monta labels amigáveis para meses
+        const labels = months.map(m => {
+            const parts = m.split('-');
+            const mm = new Date(parts[0], parts[1] - 1);
+            return mm.toLocaleDateString('pt-BR', { month: 'short', year: 'numeric' });
+        });
+
+        const ctx = document.getElementById('trendChart');
+        if (!ctx) return;
+
+        if (this.charts.trendChart) this.charts.trendChart.destroy();
+
+        try {
+            const ChartModule = await import('https://cdn.jsdelivr.net/npm/chart.js@4.4.0/auto/+esm');
+            const Chart = ChartModule.default;
+
+            // Apenas linhas (sem área)
+            this.charts.trendChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels,
+                    datasets: [
+                        {
+                            label: 'Vendas (R$)',
+                            data: sales,
+                            fill: false,
+                            borderColor: '#059669',
+                            backgroundColor: 'rgba(5,150,105,0.1)',
+                            tension: 0.32,
+                            pointRadius: 5,
+                            pointBackgroundColor: '#059669',
+                            order: 1
+                        },
+                        {
+                            label: 'Pedidos',
+                            data: qtys,
+                            fill: false,
+                            borderColor: '#3b82f6',
+                            backgroundColor: 'rgba(59,130,246,0.12)',
+                            tension: 0.32,
+                            pointRadius: 5,
+                            pointBackgroundColor: '#3b82f6',
+                            yAxisID: 'y2',
+                            order: 2
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    aspectRatio: 2,
+                    plugins: {
+                        legend: { position: 'bottom' },
+                        tooltip: {
+                            callbacks: {
+                                label: context => {
+                                    if (context.datasetIndex === 0)
+                                        return `Vendas: ${context.parsed.y ? 'R$ ' + context.parsed.y.toLocaleString('pt-BR', { minimumFractionDigits: 2 }) : 0}`;
+                                    return `Pedidos: ${context.parsed.y}`;
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            position: "left",
+                            title: { display: true, text: 'Vendas (R$)' },
+                            ticks: {
+                                callback: val => 'R$ ' + val.toLocaleString('pt-BR', { minimumFractionDigits: 0 })
+                            }
+                        },
+                        y2: {
+                            beginAtZero: true,
+                            position: 'right',
+                            grid: { drawOnChartArea: false },
+                            title: { display: true, text: 'Qtd. Pedidos' },
+                            ticks: { stepSize: 1 }
+                        }
+                    }
+                }
+            });
+        } catch (e) {
+            console.error("Erro ao carregar gráfico de tendência:", e);
+        }
+    }
+
+    renderAvgOrderValueTrend(orders, menu) {
+        // Ticket médio por mês, com período customizado se setado (excluding cancelled orders)
+        let months = {};
+        orders.filter(order => order.status !== 'cancelled').forEach(order => {
+            const date = new Date(order.created_at || order.date);
+            const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+            if (!months[key]) months[key] = { sum: 0, qtd: 0 };
+            months[key].sum += (order.total || 0);
+            months[key].qtd++;
+        });
+        const sortedKeys = Object.keys(months).sort();
+        if (sortedKeys.length === 0) {
+            document.getElementById('avgOrderValueTrend').innerHTML = '<em>Sem pedidos para calcular ticket médio.</em>'; return;
+        }
+        const tr = sortedKeys.map(key => {
+            const dt = new Date(key.split('-')[0], key.split('-')[1] - 1);
+            const med = months[key].qtd ? months[key].sum / months[key].qtd : 0;
+            return `<div>${dt.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}: <strong>${this.formatCurrency(med)}</strong> (${months[key].qtd} pedidos)</div>`;
+        });
+        document.getElementById('avgOrderValueTrend').innerHTML = tr.join('');
+    }
+
+    renderTopMenuItems(orders, menu) {
+        // Pega os 10 mais vendidos (por quantidade) - excluding cancelled orders
+        const sums = {};
+        orders.filter(order => order.status !== 'cancelled').forEach(order => {
+            const items = typeof order.items === 'string' ? JSON.parse(order.items) : order.items || [];
+            items.forEach(item => {
+                if (!sums[item.id]) sums[item.id] = { qtd: 0, sum: 0, name: '', unit: '' };
+                sums[item.id].qtd += item.quantity || 1;
+                sums[item.id].sum += (item.price || 0) * (item.quantity || 1);
+                const m = menu.find(e => e.id == item.id);
+                if (m) { sums[item.id].name = m.name; sums[item.id].unit = m.category; }
+            });
+        });
+        const sorted = Object.entries(sums)
+            .sort((a, b) => b[1].qtd - a[1].qtd)
+            .slice(0, 10);
+        const el = document.getElementById('topMenuItems');
+        if (!el) return;
+        if (sorted.length === 0) { el.innerHTML = '<em>Nenhum dado de itens vendidos.</em>'; return; }
+        el.innerHTML = `<ol class="top10-list">
+            ${sorted.map(([id, d], idx) => `
+            <li class="top10-item">
+                <span class="top10-rank">#${idx + 1}</span>
+                <span class="top10-name">${d.name || '-'}</span>
+                <span style="font-size:0.86em; color:#64748b;">${d.unit}</span>
+                <span class="top10-qtd">${d.qtd}x</span>
+                <span class="top10-sum">${this.formatCurrency(d.sum)}</span>
+            </li>`).join('')}
+        </ol>`;
+    }
+
+    renderTopClients(orders, menu) {
+        // Top clientes, por quantidade de pedidos e valor total (excluding cancelled orders)
+        const clients = {};
+        orders.filter(order => order.status !== 'cancelled').forEach(order => {
+            if (!order.customer) return;
+            if (!clients[order.customer]) clients[order.customer] = { qtd: 0, sum: 0 };
+            clients[order.customer].qtd++;
+            clients[order.customer].sum += (order.total || 0);
+        });
+        const sorted = Object.entries(clients).sort((a, b) => b[1].sum - a[1].sum).slice(0, 10);
+        const el = document.getElementById('topClients');
+        if (!el) return;
+        if (sorted.length === 0) { el.innerHTML = '<em>Nenhum cliente recorrente.</em>'; return; }
+        el.innerHTML = `<ol class="top-clients-list">
+            ${sorted.map(([name, d], idx) => `
+                <li class="top-client-item">
+                    <span class="top10-rank">#${idx + 1}</span>
+                    <span class="top-client-name">${name}</span>
+                    <span class="top-client-qtd">${d.qtd} pedidos</span>
+                    <span class="top-client-sum">${this.formatCurrency(d.sum)}</span>
+                </li>
+            `).join('')}
+        </ol>`;
+    }
+
+    renderGeneralStats(orders, menu, expenses) {
+        // Gera um resumo geral de dados para facilitar auditorias rápidas (excluding cancelled orders)
+        const activeOrders = orders.filter(order => order.status !== 'cancelled');
+        const cancelledOrders = orders.filter(order => order.status === 'cancelled');
+        const totalSales = activeOrders.reduce((a, b) => a + (b.total || 0), 0);
+        const totalOrders = activeOrders.length;
+        const firstOrder = activeOrders.length > 0 ? new Date(Math.min(...activeOrders.map(o => +new Date(o.created_at || o.date)))) : null;
+        const lastOrder = activeOrders.length > 0 ? new Date(Math.max(...activeOrders.map(o => +new Date(o.created_at || o.date)))) : null;
+        const avgOrderValue = totalOrders > 0 ? totalSales / totalOrders : 0;
+        const totalMenu = menu.length;
+        const totalExpenses = expenses.reduce((a, b) => a + (b.amount || 0), 0);
+        const cancelledValue = cancelledOrders.reduce((a, b) => a + (b.total || 0), 0);
+
+        // Pedidos por plataforma
+        let ifood = 0, vendas = 0;
+        activeOrders.forEach(order => {
+            if ((order.platform || '').toLowerCase() === 'ifood') ifood++;
+            else vendas++;
+        });
+
+        const el = document.getElementById('generalStats');
+        if (!el) return;
+        el.innerHTML = `
+        <div class="financial-summary-item">
+            <span class="financial-summary-label">Total de Pedidos:</span>
+            <span class="financial-summary-value">${totalOrders}</span>
+        </div>
+        <div class="financial-summary-item">
+            <span class="financial-summary-label">Pedidos Cancelados:</span>
+            <span class="financial-summary-value negative">${cancelledOrders.length}</span>
+        </div>
+        <div class="financial-summary-item">
+            <span class="financial-summary-label">Valor Cancelado:</span>
+            <span class="financial-summary-value negative">${this.formatCurrency(cancelledValue)}</span>
+        </div>
+        <div class="financial-summary-item">
+            <span class="financial-summary-label">Primeiro Pedido em:</span>
+            <span class="financial-summary-value">${firstOrder ? firstOrder.toLocaleDateString('pt-BR') : '-'}</span>
+        </div>
+        <div class="financial-summary-item">
+            <span class="financial-summary-label">Último Pedido em:</span>
+            <span class="financial-summary-value">${lastOrder ? lastOrder.toLocaleDateString('pt-BR') : '-'}</span>
+        </div>
+        <div class="financial-summary-item">
+            <span class="financial-summary-label">Ticket Médio:</span>
+            <span class="financial-summary-value">${this.formatCurrency(avgOrderValue)}</span>
+        </div>
+        <div class="financial-summary-item">
+            <span class="financial-summary-label">Itens no Menu:</span>
+            <span class="financial-summary-value">${totalMenu}</span>
+        </div>
+        <div class="financial-summary-item">
+            <span class="financial-summary-label">Total Vendas:</span>
+            <span class="financial-summary-value positive">${this.formatCurrency(totalSales)}</span>
+        </div>
+        <div class="financial-summary-item">
+            <span class="financial-summary-label">Total Despesas:</span>
+            <span class="financial-summary-value negative">${this.formatCurrency(totalExpenses)}</span>
+        </div>
+        <div class="financial-summary-item">
+            <span class="financial-summary-label">Pedidos Internos:</span>
+            <span class="financial-summary-value">${vendas}</span>
+        </div>
+        <div class="financial-summary-item">
+            <span class="financial-summary-label">Pedidos Ifood:</span>
+            <span class="financial-summary-value">${ifood}</span>
+        </div>
+        `;
+    }
+
+    async renderOrdersByPlatformChart(orders, menu) {
+        // Pie: pedidos por plataforma (excluding cancelled orders)
+        const ctx = document.getElementById('ordersByPlatformChart');
+        if (!ctx) return;
+        let ifood = 0, vendas = 0;
+        orders.filter(order => order.status !== 'cancelled').forEach(order => {
+            if ((order.platform || '').toLowerCase() === 'ifood') ifood++;
+            else vendas++;
+        });
+
+        // Se já existir, destrua
+        if (this.charts.ordersByPlatform) this.charts.ordersByPlatform.destroy();
+
+        try {
+            const ChartModule = await import('https://cdn.jsdelivr.net/npm/chart.js@4.4.0/auto/+esm');
+            const Chart = ChartModule.default;
+            this.charts.ordersByPlatform = new Chart(ctx, {
+                type: 'pie',
+                data: {
+                    labels: ['Vendas Internas', 'Ifood'],
                     datasets: [{
-                        data: data,
+                        data: [vendas, ifood],
                         backgroundColor: [
-                            '#059669',
-                            '#0891b2',
-                            '#7c3aed',
-                            '#dc2626',
-                            '#ea580c'
+                            '#059669', '#dc2626'
                         ]
                     }]
                 },
                 options: {
                     responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        legend: {
-                            position: 'bottom'
-                        }
-                    }
+                    plugins: { legend: { position: 'bottom' } }
                 }
             });
-        } catch (error) {
-            console.error('Error loading category chart:', error);
-        }
+        } catch (e) { }
     }
 
-    async loadTrendChart(orders) {
-        const ctx = document.getElementById('trendChart');
-        if (!ctx) return;
+    renderStockMovementReport(changeLog, inventory) {
+        // Baixas de estoque automáticas e cancelamentos (últimos pedidos e finalizações de compra), pegar só últimas 15
+        const recent = changeLog
+            .filter(log =>
+                log.table === 'stock_movement' || log.table === 'purchase_completion' || log.table === 'order_cancellation'
+            )
+            .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+            .slice(0, 15);
 
-        // Calculate monthly trends
-        const monthlyData = {};
-        
-        orders.forEach(order => {
-            const date = new Date(order.created_at || order.date);
-            const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-            
-            if (!monthlyData[monthKey]) {
-                monthlyData[monthKey] = 0;
+        const el = document.getElementById('stockMovementReport');
+        if (!el) return;
+
+        if (recent.length === 0) {
+            el.innerHTML = '<em>Nenhuma movimentação recente de estoque registrada.</em>'; return;
+        }
+        // Estrutura
+        el.innerHTML = recent.map(log => {
+            if (log.table === 'stock_movement') {
+                const m = log.data;
+                return `
+                    <div class="sync-activity-item">
+                        <div class="sync-activity-icon deduction">
+                            <i class="fas fa-minus"></i>
+                        </div>
+                        <div class="sync-activity-content">
+                            <span class="sync-activity-title">Pedido (${m.customer}) baixado no estoque</span>
+                            <div class="sync-activity-time">${new Date(log.timestamp).toLocaleString('pt-BR')}</div>
+                            <ul style="margin: .23em 0 0 0.7em; font-size: 0.925em;">
+                                ${m.movements.map(mv => `<li>${mv.deducted} ${mv.unit} de ${mv.itemName} (de ${mv.oldQuantity} para ${mv.newQuantity})</li>`).join('')}
+                            </ul>
+                        </div>
+                    </div>
+                `;
+            } else if (log.table === 'purchase_completion') {
+                const d = log.data;
+                return `
+                    <div class="sync-activity-item">
+                        <div class="sync-activity-icon complete">
+                            <i class="fas fa-cart-plus"></i>
+                        </div>
+                        <div class="sync-activity-content">
+                            <span class="sync-activity-title">Compra de <strong>${d.supplier}</strong> finalizada</span>
+                            <div class="sync-activity-time">${d.completedAt ? new Date(d.completedAt).toLocaleString('pt-BR') : ''}</div>
+                            <ul style="margin: .17em 0 0 0.7em; font-size: 0.915em;">
+                                ${d.stockMovements.map(mv => `<li>+${mv.addedQuantity} ${mv.unit} em ${mv.item}</li>`).join('')}
+                            </ul>
+                        </div>
+                    </div>
+                `;
+            } else if (log.table === 'order_cancellation') {
+                const d = log.data;
+                return `
+                    <div class="sync-activity-item">
+                        <div class="sync-activity-icon delete">
+                            <i class="fas fa-times"></i>
+                        </div>
+                        <div class="sync-activity-content">
+                            <span class="sync-activity-title">Pedido #${d.orderId} cancelado</span>
+                            <div class="sync-activity-time">${new Date(d.cancelled_at).toLocaleString('pt-BR')}</div>
+                            <div style="margin: .17em 0 0 0.7em; font-size: 0.915em;">
+                                Cliente: ${d.customer} | Valor: ${this.formatCurrency(d.total)}<br>
+                                Cancelado por: ${d.cancelled_by}<br>
+                                ${d.cancellation_reason ? `Motivo: ${d.cancellation_reason}` : ''}
+                            </div>
+                        </div>
+                    </div>
+                `;
             }
-            monthlyData[monthKey] += order.total || 0;
-        });
+        }).join('');
+    }
 
-        const sortedMonths = Object.keys(monthlyData).sort();
-        const labels = sortedMonths.map(month => {
-            const [year, monthNum] = month.split('-');
-            return new Date(year, monthNum - 1).toLocaleDateString('pt-BR', { month: 'short', year: 'numeric' });
-        });
-        const data = sortedMonths.map(month => monthlyData[month]);
+    renderCancellationReport(changeLog) {
+        const el = document.getElementById('cancellationReport');
+        if (!el) return;
 
-        // Destroy existing chart if it exists
-        if (this.charts.trend) {
-            this.charts.trend.destroy();
+        // Busca todos os logs tipo 'order_cancellation'
+        const logs = changeLog
+            .filter(log => log.table === 'order_cancellation')
+            .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)); // Mais recentes primeiro
+
+        if (logs.length === 0) {
+            el.innerHTML = '<em>Nenhum pedido cancelado registrado.</em>'; return;
         }
 
-        // Create new chart with fixed import
-        try {
-            const ChartModule = await import('https://cdn.jsdelivr.net/npm/chart.js@4.4.0/auto/+esm');
-            const Chart = ChartModule.default;
-            
-            this.charts.trend = new Chart(ctx, {
-                type: 'line',
-                data: {
-                    labels: labels,
-                    datasets: [{
-                        label: 'Vendas Mensais (R$)',
-                        data: data,
-                        borderColor: '#059669',
-                        backgroundColor: 'rgba(5, 150, 105, 0.1)',
-                        tension: 0.4,
-                        fill: true
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    scales: {
-                        y: {
-                            beginAtZero: true,
-                            ticks: {
-                                callback: function(value) {
-                                    return 'R$ ' + value.toFixed(2);
-                                }
-                            }
-                        }
-                    }
-                }
-            });
-        } catch (error) {
-            console.error('Error loading trend chart:', error);
+        el.innerHTML = `
+        <table style="width:100%; font-size: 0.96em; border-collapse:collapse;">
+            <thead>
+                <tr style="background:#f0fdf4">
+                    <th style="padding:0.6em 0.4em;">Pedido</th>
+                    <th style="padding:0.6em 0.4em;">Cliente</th>
+                    <th style="padding:0.6em 0.4em;">Valor</th>
+                    <th style="padding:0.6em 0.4em;">Cancelado por</th>
+                    <th style="padding:0.6em 0.4em;">Motivo</th>
+                    <th style="padding:0.6em 0.4em;">Data/Hora</th>
+                    <th style="padding:0.6em 0.4em;">Status Original</th>
+                </tr>
+            </thead>
+            <tbody>
+            ${logs.map(log => {
+                const d = log.data || {};
+                return `
+                <tr style="border-bottom:1px solid #e2e8f0;">
+                    <td style="padding:0.45em 0.3em;">#${d.orderId || '-'}</td>
+                    <td style="padding:0.45em 0.3em;">${d.customer || '-'}</td>
+                    <td style="padding:0.45em 0.3em;">${this.formatCurrency(d.total || 0)}</td>
+                    <td style="padding:0.45em 0.3em;">${d.cancelled_by || '-'}</td>
+                    <td style="padding:0.45em 0.3em; max-width: 180px; word-break:break-word;">
+                        ${d.cancellation_reason ? `<span>${d.cancellation_reason}</span>` : '<span style="color:#64748b;">-</span>'}
+                    </td>
+                    <td style="padding:0.45em 0.3em;">${d.cancelled_at ? new Date(d.cancelled_at).toLocaleString('pt-BR') : '-'}</td>
+                    <td style="padding:0.45em 0.3em;">${this.getStatusText(d.original_status)}</td>
+                </tr>
+                `;
+            }).join('')}
+            </tbody>
+        </table>
+        <div style="margin:1.2em 0 0.5em 0; font-size:0.89em; color:#64748b;">
+            Total cancelamentos: <strong>${logs.length}</strong> | Valor total: <strong>${this.formatCurrency(logs.reduce((a, b) => a + (b.data?.total || 0), 0))}</strong>
+        </div>
+        `;
+    }
+
+    renderFeesReport(orders) {
+        const el = document.getElementById('feesReport');
+        if (!el) return;
+
+        // Filtra apenas pedidos ativos (não cancelados)
+        const activeOrders = orders.filter(order => order.status !== 'cancelled');
+
+        if (activeOrders.length === 0) {
+            el.innerHTML = '<em>Nenhum pedido para análise de taxas.</em>';
+            return;
         }
+
+        // Agrupa por método de pagamento
+        const feesByMethod = {};
+        let totalFees = 0;
+        let totalRevenue = 0;
+
+        activeOrders.forEach(order => {
+            const platform = order.platform || 'vendas';
+            const paymentMethod = order.payment_method || 'dinheiro';
+            const orderTotal = order.total || 0;
+            const fee = this.calculatePaymentFee(orderTotal, paymentMethod, platform);
+
+            totalRevenue += orderTotal;
+            totalFees += fee;
+
+            let key = paymentMethod;
+            if (platform === 'ifood') {
+                key = 'ifood';
+            }
+
+            if (!feesByMethod[key]) {
+                feesByMethod[key] = {
+                    count: 0,
+                    totalValue: 0,
+                    totalFees: 0,
+                    percentage: 0
+                };
+            }
+
+            feesByMethod[key].count++;
+            feesByMethod[key].totalValue += orderTotal;
+            feesByMethod[key].totalFees += fee;
+        });
+
+        // Calcula percentuais
+        Object.keys(feesByMethod).forEach(key => {
+            const method = feesByMethod[key];
+            if (key === 'ifood') {
+                method.percentage = this.paymentFees.ifoodFee + this.paymentFees.ifoodInvestment;
+            } else {
+                method.percentage = this.getPaymentFeePercentage(key);
+            }
+        });
+
+        const sortedMethods = Object.entries(feesByMethod)
+            .sort((a, b) => b[1].totalFees - a[1].totalFees);
+
+        el.innerHTML = `
+            <div style="margin-bottom: 1.5rem;">
+                <h4 style="margin-bottom: 1rem; color: #374151;">Resumo de Taxas</h4>
+                <div class="financial-summary-item">
+                    <span class="financial-summary-label">Receita Total:</span>
+                    <span class="financial-summary-value positive">${this.formatCurrency(totalRevenue)}</span>
+                </div>
+                <div class="financial-summary-item">
+                    <span class="financial-summary-label">Total de Taxas:</span>
+                    <span class="financial-summary-value negative">${this.formatCurrency(totalFees)}</span>
+                </div>
+                <div class="financial-summary-item">
+                    <span class="financial-summary-label">% de Taxas sobre Receita:</span>
+                    <span class="financial-summary-value negative">${((totalFees / totalRevenue) * 100).toFixed(2)}%</span>
+                </div>
+            </div>
+
+            <h4 style="margin-bottom: 1rem; color: #374151;">Detalhamento por Método</h4>
+            <table style="width:100%; font-size: 0.96em; border-collapse:collapse;">
+                <thead>
+                    <tr style="background:#f0fdf4">
+                        <th style="padding:0.6em 0.4em; text-align:left;">Método</th>
+                        <th style="padding:0.6em 0.4em; text-align:center;">Taxa %</th>
+                        <th style="padding:0.6em 0.4em; text-align:center;">Pedidos</th>
+                        <th style="padding:0.6em 0.4em; text-align:right;">Valor Vendido</th>
+                        <th style="padding:0.6em 0.4em; text-align:right;">Total Taxas</th>
+                        <th style="padding:0.6em 0.4em; text-align:right;">Valor Líquido</th>
+                    </tr>
+                </thead>
+                <tbody>
+                ${sortedMethods.map(([method, data]) => {
+                    const methodName = this.getPaymentMethodText(method, method === 'ifood' ? 'ifood' : 'vendas');
+                    const liquidValue = data.totalValue - data.totalFees;
+                    return `
+                    <tr style="border-bottom:1px solid #e2e8f0;">
+                        <td style="padding:0.45em 0.3em;">${methodName}</td>
+                        <td style="padding:0.45em 0.3em; text-align:center;">${data.percentage.toFixed(2)}%</td>
+                        <td style="padding:0.45em 0.3em; text-align:center;">${data.count}</td>
+                        <td style="padding:0.45em 0.3em; text-align:right;">${this.formatCurrency(data.totalValue)}</td>
+                        <td style="padding:0.45em 0.3em; text-align:right; color:#dc2626;">${this.formatCurrency(data.totalFees)}</td>
+                        <td style="padding:0.45em 0.3em; text-align:right; color:#059669;">${this.formatCurrency(liquidValue)}</td>
+                    </tr>
+                    `;
+                }).join('')}
+                </tbody>
+            </table>
+        `;
     }
 
     // Utility methods
@@ -2059,7 +3183,6 @@ class RestaurantApp {
         }, 3000);
     }
 
-    // Modal management
     openModal(modalId) {
         document.getElementById(modalId).classList.add('active');
         
@@ -2079,6 +3202,11 @@ class RestaurantApp {
         if (modalId === 'expenseModal') {
             document.getElementById('expenseDate').value = new Date().toISOString().split('T')[0];
         }
+
+        // Setup payment methods for order modal
+        if (modalId === 'orderModal') {
+            this.updatePaymentMethods();
+        }
     }
 
     closeModal(modalId) {
@@ -2089,6 +3217,7 @@ class RestaurantApp {
         if (form) {
             form.reset();
             delete form.dataset.editingId;
+            delete form.dataset.orderId;
         }
         
         // Reset menu modal specific elements
@@ -2097,18 +3226,25 @@ class RestaurantApp {
             document.getElementById('menuCostPrice').value = 0;
             delete document.getElementById('menuForm').dataset.editingId;
             document.querySelector('#menuModal .modal-header h3').textContent = 'Adicionar Item ao Menu';
+            // Hide duplicate btn if exists
+            let btnGroup = document.querySelector('#menuModal .form-actions .duplicate-btn');
+            if(btnGroup) btnGroup.style.display = 'none';
         }
         
         // Reset inventory modal specific elements  
         if (modalId === 'inventoryModal') {
             delete document.getElementById('inventoryForm').dataset.editingId;
             document.querySelector('#inventoryModal .modal-header h3').textContent = 'Adicionar Item ao Estoque';
+            let dupBtn = document.querySelector('#inventoryModal .form-actions .duplicate-btn');
+            if(dupBtn) dupBtn.style.display = 'none';
         }
         
         // Reset order items if closing order modal
         if (modalId === 'orderModal') {
             document.getElementById('orderItems').innerHTML = '';
             this.orderItems = [];
+            this.orderSubtotal = 0;
+            this.orderFee = 0;
             this.orderTotal = 0;
         }
         
@@ -2118,6 +3254,56 @@ class RestaurantApp {
             this.purchaseItems = [];
             this.purchaseTotal = 0;
         }
+        
+        // Reset cancel order modal
+        if (modalId === 'cancelOrderModal') {
+            document.getElementById('cancelOrderInfo').innerHTML = '';
+            delete document.getElementById('cancelOrderForm').dataset.orderId;
+        }
+    }
+
+    updatePaymentMethods() {
+        const platform = document.getElementById('orderPlatform').value;
+        const paymentGroup = document.getElementById('paymentMethodGroup');
+        const paymentSelect = document.getElementById('orderPaymentMethod');
+        
+        if (platform === 'ifood') {
+            paymentGroup.style.display = 'none';
+            paymentSelect.value = 'ifood';
+        } else {
+            paymentGroup.style.display = 'block';
+            paymentSelect.innerHTML = `
+                <option value="">Selecione a forma de pagamento</option>
+                <option value="dinheiro">Dinheiro</option>
+                <option value="credito">Cartão de Crédito</option>
+                <option value="debito">Cartão de Débito</option>
+                <option value="pix">PIX</option>
+            `;
+        }
+        this.updateOrderTotal();
+    }
+
+    calculatePaymentFee(subtotal, paymentMethod, platform) {
+        if (paymentMethod === 'dinheiro') return 0;
+        
+        let fee = 0;
+        if (platform === 'ifood') {
+            // Ifood has both platform fee and investment fee
+            fee = (subtotal * this.paymentFees.ifoodFee / 100) + (subtotal * this.paymentFees.ifoodInvestment / 100);
+        } else {
+            switch (paymentMethod) {
+                case 'credito':
+                    fee = subtotal * this.paymentFees.creditCardFee / 100;
+                    break;
+                case 'debito':
+                    fee = subtotal * this.paymentFees.debitCardFee / 100;
+                    break;
+                case 'pix':
+                    fee = subtotal * this.paymentFees.pixFee / 100;
+                    break;
+            }
+        }
+        return fee;
     }
 
     // Auto-sync setup
@@ -2161,6 +3347,10 @@ function openPurchaseModal() {
 
 function openExpenseModal() {
     window.app.openModal('expenseModal');
+}
+
+function openCancelOrderModal() {
+    window.app.openModal('cancelOrderModal');
 }
 
 function closeModal(modalId) {
